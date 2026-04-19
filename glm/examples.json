@@ -1,0 +1,117 @@
+[
+  {
+    "scenario": "Standard Meeting",
+    "input": "Sync for GDGoC UM Week tomorrow at 2pm on Google Meet.",
+    "output": {
+      "entities": [
+        {
+          "type": "meeting",
+          "title": "GDGoC UM Week Sync",
+          "start_time": "2026-04-19T14:00:00",
+          "end_time": "2026-04-19T15:00:00",
+          "confidence_score": 0.95,
+          "needs_clarification": false
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Academic Deadline (Moodle Style)",
+    "input": "Submission: MediaNest Software Quality Report. Due date: Friday, 24 April 2026, 11:59 PM.",
+    "output": {
+      "entities": [
+        {
+          "type": "deadline",
+          "title": "MediaNest Software Quality Report Submission",
+          "start_time": "2026-04-24T23:59:00",
+          "confidence_score": 1.0,
+          "needs_clarification": false
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Vague Task (No specific time)",
+    "input": "I need to finish the database normalization for MindLens by sometime next week.",
+    "output": {
+      "entities": [
+        {
+          "type": "task",
+          "title": "Database Normalization (MindLens)",
+          "start_time": null,
+          "description": "User mentioned 'next week'. Action required to define specific day.",
+          "confidence_score": 0.6,
+          "needs_clarification": true,
+          "clarification_question": "Which day next week would you like to set as the deadline for this task?"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Multi-Entity (Meeting + Task)",
+    "input": "Let's meet Monday at 10am to discuss the UI. Also, Syn Yee, please update the README before then.",
+    "output": {
+      "entities": [
+        {
+          "type": "meeting",
+          "title": "UI Discussion Meeting",
+          "start_time": "2026-04-20T10:00:00",
+          "confidence_score": 0.9,
+          "needs_clarification": false
+        },
+        {
+          "type": "task",
+          "title": "Update README",
+          "start_time": "2026-04-20T09:00:00",
+          "description": "Must be done before the UI meeting.",
+          "confidence_score": 0.7,
+          "needs_clarification": false
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Personal Preference Conflict",
+    "input": "Can we have a quick call this Wednesday at 6pm?",
+    "output": {
+      "entities": [
+        {
+          "type": "meeting",
+          "title": "Quick Call",
+          "start_time": "2026-04-22T18:00:00",
+          "confidence_score": 0.9,
+          "needs_clarification": true,
+          "clarification_question": "You usually have Badminton at 6pm on Wednesdays. Would you like to suggest a different time?"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Noise (Ignore irrelevant text)",
+    "input": "The laksa at the FSKTM cafe is actually not bad today, you guys should try it.",
+    "output": {
+      "entities": [],
+      "analysis_metadata": {
+        "source_detected": "chat",
+        "status": "No actionable items found"
+      }
+    }
+  },
+  {
+    "scenario": "Agentic Prediction for Vague Input",
+    "input": "Let's sync up after lunch today.",
+    "output": {
+        "entities": [
+        {
+            "type": "meeting",
+            "title": "Sync Up",
+            "start_time": "2026-04-18T14:00:00",
+            "is_prediction": true,
+            "needs_clarification": true,
+            "confidence_reasoning": "User said 'after lunch'. Standard lunch at UM ends at 2pm. Selecting 2pm as the most likely start time.",
+            "clarification_question": "I've suggested 2:00 PM (after lunch). Does this work for you?"
+        }
+        ]
+    }
+  }   
+]
