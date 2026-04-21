@@ -1,48 +1,119 @@
 const MANUAL_MENU_ID = "veloce-extract-task";
 const DEFAULT_TIMEOUT_MS = 15000;
-const NOTIFICATION_ICON_DATA_URI =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WnR6JwAAAAASUVORK5CYII=";
+const NOTIFICATION_ICON_PATH = "Veloce_Logo.png";
 
 const DEFAULT_SETTINGS = {
   auto_detect_mode: true,
+  auto_read_permissions: true,
+  manual_trigger_mode: true,
   user_id: "anonymous",
   webhook_url: "",
   ai_prompt: ""
 };
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: MANUAL_MENU_ID,
-    title: "Extract Task",
-    contexts: ["selection"]
+function createManualContextMenu() {
+  chrome.contextMenus.create(
+    {
+      id: MANUAL_MENU_ID,
+      title: "Add to Calendar",
+      contexts: ["selection"]
+    },
+    () => {
+      // Ignore duplicate creation attempts when service worker restarts.
+      if (chrome.runtime.lastError) {
+        const message = chrome.runtime.lastError.message || "";
+        if (!message.includes("duplicate id")) {
+          console.debug("[Veloce] Context menu create warning:", message);
+        }
+      }
+    }
+  );
+}
+
+function removeManualContextMenu() {
+  chrome.contextMenus.remove(MANUAL_MENU_ID, () => {
+    // Ignore not-found removal attempts when menu is already absent.
+    if (chrome.runtime.lastError) {
+      const message = chrome.runtime.lastError.message || "";
+      if (!message.includes("Cannot find menu item")) {
+        console.debug("[Veloce] Context menu remove warning:", message);
+      }
+    }
   });
+}
+
+function syncManualContextMenu(isEnabled) {
+  if (isEnabled === false) {
+    removeManualContextMenu();
+    return;
+  }
+
+  createManualContextMenu();
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  createManualContextMenu();
 
   chrome.storage.local.set({
     ...DEFAULT_SETTINGS,
     workflowState: {
       isLoading: false,
+      status: "idle",
+      statusMessage: "",
       error: "",
       lastUpdated: new Date().toISOString()
     }
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.storage.local.get(["manual_trigger_mode"], (state) => {
+  syncManualContextMenu(state.manual_trigger_mode !== false);
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.manual_trigger_mode) {
+    return;
+  }
+
+  syncManualContextMenu(changes.manual_trigger_mode.newValue !== false);
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== MANUAL_MENU_ID || !tab?.id) {
     return;
   }
 
-  chrome.tabs.sendMessage(tab.id, { type: "trigger-manual-extract" });
+  const { manual_trigger_mode: manualTriggerMode } = await chrome.storage.local.get([
+    "manual_trigger_mode"
+  ]);
+  if (manualTriggerMode === false) {
+    notifyStatus("manual trigger disabled", "Enable Manual Trigger Mode in settings.");
+    return;
+  }
+
+  chrome.tabs.sendMessage(tab.id, { type: "trigger-manual-extract" }, () => {
+    if (chrome.runtime.lastError) {
+      console.debug("[Veloce] Manual trigger message skipped:", chrome.runtime.lastError.message);
+    }
+  });
 });
 
 function persistPayload(payload) {
   chrome.storage.local.set({ lastPayload: payload });
 }
 
+async function persistTaskHistory(payload) {
+  const { taskHistory } = await chrome.storage.local.get(["taskHistory"]);
+  const nextHistory = [payload, ...(Array.isArray(taskHistory) ? taskHistory : [])].slice(0, 20);
+  chrome.storage.local.set({ taskHistory: nextHistory });
+}
+
 function setWorkflowState(nextState) {
   chrome.storage.local.set({
     workflowState: {
       isLoading: Boolean(nextState.isLoading),
+      status: nextState.status || "idle",
+      statusMessage: nextState.statusMessage || "",
       error: nextState.error || "",
       lastUpdated: new Date().toISOString()
     }
@@ -63,7 +134,7 @@ function notifyStatus(status, message) {
 
   chrome.notifications.create({
     type: "basic",
-    iconUrl: NOTIFICATION_ICON_DATA_URI,
+    iconUrl: chrome.runtime.getURL(NOTIFICATION_ICON_PATH),
     title,
     message: message || status || "Task processing update received."
   });
@@ -78,12 +149,13 @@ async function callWebhook(payload) {
   if (!webhookUrl) {
     setWorkflowState({
       isLoading: false,
+      status: "error",
       error: "Webhook URL is not configured in settings."
     });
     return;
   }
 
-  setWorkflowState({ isLoading: true, error: "" });
+  setWorkflowState({ isLoading: true, status: "processing", statusMessage: "", error: "" });
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -107,7 +179,12 @@ async function callWebhook(payload) {
 
     const data = await response.json();
     chrome.storage.local.set({ aiResponse: data });
-    setWorkflowState({ isLoading: false, error: "" });
+    setWorkflowState({
+      isLoading: false,
+      status: "success",
+      statusMessage: data?.message || "Event created successfully.",
+      error: ""
+    });
     notifyStatus(data.status, data.message);
   } catch (error) {
     const friendlyError =
@@ -117,6 +194,7 @@ async function callWebhook(payload) {
 
     setWorkflowState({
       isLoading: false,
+      status: "error",
       error: friendlyError
     });
     notifyStatus("error", friendlyError);
@@ -127,6 +205,7 @@ async function callWebhook(payload) {
 
 function processPayload(payload, sender, sendResponse) {
   persistPayload(payload);
+  persistTaskHistory(payload);
   console.log("[Veloce] Payload received", {
     from: sender.tab?.url,
     payload

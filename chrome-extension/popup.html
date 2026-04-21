@@ -24,6 +24,7 @@
             <span>Processing with GLM...</span>
           </div>
 
+          <div class="success" id="successState"></div>
           <div class="error" id="errorState"></div>
 
           <div class="schema">
@@ -51,6 +52,17 @@
           </div>
 
           <div class="small" id="lastPayload">No payload captured yet.</div>
+
+          <div class="schema extra-schema">
+            <div class="row">
+              <span class="label">Extracted Tasks</span>
+              <pre class="json-box" id="taskList">No extracted tasks yet.</pre>
+            </div>
+            <div class="row">
+              <span class="label">GLM Output JSON</span>
+              <pre class="json-box" id="glmJson">No GLM response yet.</pre>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -62,6 +74,16 @@
             <label class="switch" for="autoDetectToggle">
               <span>Auto-Detect Mode</span>
               <input id="autoDetectToggle" type="checkbox" />
+            </label>
+
+            <label class="switch" for="autoReadToggle">
+              <span>Auto-Read Permissions</span>
+              <input id="autoReadToggle" type="checkbox" />
+            </label>
+
+            <label class="switch" for="manualModeToggle">
+              <span>Manual Trigger Mode</span>
+              <input id="manualModeToggle" type="checkbox" />
             </label>
 
             <label class="field" for="userIdInput">

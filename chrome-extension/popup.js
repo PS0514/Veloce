@@ -5,15 +5,20 @@ const els = {
   settingsPanel: document.getElementById("settingsPanel"),
   statusPill: document.getElementById("statusPill"),
   loadingState: document.getElementById("loadingState"),
+  successState: document.getElementById("successState"),
   errorState: document.getElementById("errorState"),
   fieldTitle: document.getElementById("fieldTitle"),
   fieldDate: document.getElementById("fieldDate"),
   fieldTime: document.getElementById("fieldTime"),
   fieldConfidence: document.getElementById("fieldConfidence"),
   fieldMessage: document.getElementById("fieldMessage"),
+  taskList: document.getElementById("taskList"),
+  glmJson: document.getElementById("glmJson"),
   clarificationWarning: document.getElementById("clarificationWarning"),
   lastPayload: document.getElementById("lastPayload"),
   autoDetectToggle: document.getElementById("autoDetectToggle"),
+  autoReadToggle: document.getElementById("autoReadToggle"),
+  manualModeToggle: document.getElementById("manualModeToggle"),
   userIdInput: document.getElementById("userIdInput"),
   webhookUrlInput: document.getElementById("webhookUrlInput"),
   promptInput: document.getElementById("promptInput"),
@@ -24,6 +29,8 @@ const els = {
 
 const DEFAULT_SETTINGS = {
   auto_detect_mode: true,
+  auto_read_permissions: true,
+  manual_trigger_mode: true,
   user_id: "anonymous",
   webhook_url: "",
   ai_prompt: ""
@@ -90,18 +97,48 @@ function renderPayload(payload) {
   els.lastPayload.textContent = `${summary} | ${truncate(payload.text)}`;
 }
 
+function renderTaskHistory(history) {
+  if (!Array.isArray(history) || history.length === 0) {
+    els.taskList.textContent = "No extracted tasks yet.";
+    return;
+  }
+
+  const lines = history.slice(0, 8).map((item) => {
+    const when = item?.timestamp ? new Date(item.timestamp).toLocaleString() : "Unknown time";
+    const source = item?.source || "unknown";
+    const text = truncate(item?.text || "", 180) || "(empty)";
+    return `- [${when}] ${source}: ${text}`;
+  });
+
+  els.taskList.textContent = lines.join("\n");
+}
+
+function renderGlmJson(aiResponse) {
+  if (!aiResponse || typeof aiResponse !== "object" || Object.keys(aiResponse).length === 0) {
+    els.glmJson.textContent = "No GLM response yet.";
+    return;
+  }
+
+  els.glmJson.textContent = JSON.stringify(aiResponse, null, 2);
+}
+
 function renderWorkflowState(workflowState) {
   const isLoading = Boolean(workflowState?.isLoading);
   const hasError = Boolean(workflowState?.error);
+  const isSuccess = workflowState?.status === "success";
 
   els.loadingState.style.display = isLoading ? "flex" : "none";
   els.errorState.style.display = hasError ? "block" : "none";
   els.errorState.textContent = workflowState?.error || "";
+  els.successState.style.display = isSuccess && !isLoading ? "block" : "none";
+  els.successState.textContent = workflowState?.statusMessage || "Event created.";
 
   if (isLoading) {
     els.statusPill.textContent = "Processing";
   } else if (hasError) {
     els.statusPill.textContent = "Error";
+  } else if (isSuccess) {
+    els.statusPill.textContent = "Success";
   } else {
     els.statusPill.textContent = "Ready";
   }
@@ -109,6 +146,8 @@ function renderWorkflowState(workflowState) {
 
 function renderSettings(state) {
   els.autoDetectToggle.checked = state.auto_detect_mode !== false;
+  els.autoReadToggle.checked = state.auto_read_permissions !== false;
+  els.manualModeToggle.checked = state.manual_trigger_mode !== false;
   els.userIdInput.value = state.user_id || "anonymous";
   els.webhookUrlInput.value = state.webhook_url || "";
   els.promptInput.value = state.ai_prompt || "";
@@ -117,6 +156,8 @@ function renderSettings(state) {
 function saveSettings() {
   const next = {
     auto_detect_mode: els.autoDetectToggle.checked,
+    auto_read_permissions: els.autoReadToggle.checked,
+    manual_trigger_mode: els.manualModeToggle.checked,
     user_id: (els.userIdInput.value || "anonymous").trim(),
     webhook_url: (els.webhookUrlInput.value || "").trim(),
     ai_prompt: (els.promptInput.value || "").trim()
@@ -136,10 +177,23 @@ function resetAllSettings() {
 
 function refresh() {
   chrome.storage.local.get(
-    ["aiResponse", "lastPayload", "workflowState", "auto_detect_mode", "user_id", "webhook_url", "ai_prompt"],
+    [
+      "aiResponse",
+      "lastPayload",
+      "taskHistory",
+      "workflowState",
+      "auto_detect_mode",
+      "auto_read_permissions",
+      "manual_trigger_mode",
+      "user_id",
+      "webhook_url",
+      "ai_prompt"
+    ],
     (state) => {
       renderAiResponse(state.aiResponse || {});
+      renderGlmJson(state.aiResponse || {});
       renderPayload(state.lastPayload);
+      renderTaskHistory(state.taskHistory || []);
       renderWorkflowState(state.workflowState || {});
       renderSettings(state);
     }
@@ -156,7 +210,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     return;
   }
 
-  if (changes.aiResponse || changes.lastPayload || changes.workflowState) {
+  if (
+    changes.aiResponse ||
+    changes.lastPayload ||
+    changes.taskHistory ||
+    changes.workflowState ||
+    changes.auto_detect_mode ||
+    changes.auto_read_permissions ||
+    changes.manual_trigger_mode
+  ) {
     refresh();
   }
 });

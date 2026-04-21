@@ -3,6 +3,7 @@
 ## Included Files
 - manifest.json (MV3)
 - popup.html
+- popup.css
 - popup.js
 - background.js (service worker)
 - content.js
@@ -32,9 +33,10 @@ Update the Moodle host pattern to your institution domain if needed.
 - Gmail: tries common Gmail body selectors and sends extracted text payloads.
 - Telegram Web: uses MutationObserver to detect new messages in active chat.
 - Moodle: extracts assignment/announcement description blocks.
-- Manual trigger:
-  - Right-click selected text -> Extract Task
-  - Floating "Extract Task" button appears near highlighted text
+- Manual trigger (Add to Calendar flow):
+  - Right-click selected text -> Add to Calendar
+  - Floating "Add to Calendar" button appears near highlighted text
+  - Selected text is sent to the GLM webhook pipeline
 
 ## Day 4 Behaviors
 - Popup includes a schema-mapped AI card with fields:
@@ -43,6 +45,9 @@ Update the Moodle host pattern to your institution domain if needed.
   - time
   - confidence
   - message
+- Popup also shows:
+  - extracted task history (latest captured payloads)
+  - raw GLM output JSON view
 - Confidence badge states:
   - Green when confidence > 0.90
   - Yellow when confidence < 0.80
@@ -51,10 +56,13 @@ Update the Moodle host pattern to your institution domain if needed.
 ## Day 5 Settings
 - Settings tab in popup with:
   - Auto-Detect Mode toggle (master switch)
+  - Auto-Read Permissions toggle
+  - Manual Trigger Mode toggle
   - User ID
   - n8n Webhook URL
 - Settings are persisted in chrome.storage.local.
-- content.js checks Auto-Detect Mode before any auto scraping starts.
+- content.js checks Auto-Detect Mode and Auto-Read Permissions before any auto scraping starts.
+- Manual trigger actions respect Manual Trigger Mode.
 
 ## Day 6 Integration
 - background.js POSTs extracted payloads to the configured n8n webhook URL.
@@ -63,4 +71,5 @@ Update the Moodle host pattern to your institution domain if needed.
 
 ## Day 7 UX
 - Popup shows animated loading spinner while webhook processing is in progress.
+- Popup shows explicit success state when event creation succeeds.
 - Timeout/network failures show friendly error: "System busy, please try again."

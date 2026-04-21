@@ -1,12 +1,50 @@
 const seenTelegramMessages = new Set();
 let floatingButton = null;
 
-function isAutoDetectEnabled() {
+function isExtensionContextActive() {
+  return typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
+}
+
+function getLocalState(keys, fallback = {}) {
   return new Promise((resolve) => {
-    chrome.storage.local.get(["auto_detect_mode"], (result) => {
-      resolve(result.auto_detect_mode !== false);
-    });
+    if (!isExtensionContextActive()) {
+      resolve(fallback);
+      return;
+    }
+
+    try {
+      chrome.storage.local.get(keys, (result) => {
+        if (chrome.runtime.lastError) {
+          console.debug("[Veloce] Storage read skipped:", chrome.runtime.lastError.message);
+          resolve(fallback);
+          return;
+        }
+
+        resolve(result || fallback);
+      });
+    } catch (error) {
+      console.debug("[Veloce] Storage read failed:", error?.message || error);
+      resolve(fallback);
+    }
   });
+}
+
+function isAutoDetectEnabled() {
+  return getLocalState(["auto_detect_mode"], { auto_detect_mode: false }).then(
+    (result) => result.auto_detect_mode !== false
+  );
+}
+
+function isAutoReadAllowed() {
+  return getLocalState(["auto_read_permissions"], { auto_read_permissions: false }).then(
+    (result) => result.auto_read_permissions !== false
+  );
+}
+
+function isManualTriggerEnabled() {
+  return getLocalState(["manual_trigger_mode"], { manual_trigger_mode: false }).then(
+    (result) => result.manual_trigger_mode !== false
+  );
 }
 
 function detectSource() {
@@ -28,11 +66,9 @@ function detectSource() {
 }
 
 function getStoredUserId() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(["user_id"], (result) => {
-      resolve(result.user_id || "anonymous");
-    });
-  });
+  return getLocalState(["user_id"], { user_id: "anonymous" }).then(
+    (result) => result.user_id || "anonymous"
+  );
 }
 
 async function makePayload(source, text) {
@@ -46,11 +82,19 @@ async function makePayload(source, text) {
 }
 
 function relayPayload(type, payload) {
-  chrome.runtime.sendMessage({ type, payload }, () => {
-    if (chrome.runtime.lastError) {
-      console.debug("[Veloce] Background relay unavailable", chrome.runtime.lastError.message);
-    }
-  });
+  if (!isExtensionContextActive()) {
+    return;
+  }
+
+  try {
+    chrome.runtime.sendMessage({ type, payload }, () => {
+      if (chrome.runtime.lastError) {
+        console.debug("[Veloce] Background relay unavailable", chrome.runtime.lastError.message);
+      }
+    });
+  } catch (error) {
+    console.debug("[Veloce] Background relay failed:", error?.message || error);
+  }
 }
 
 function uniqueNonEmptyText(nodes) {
@@ -202,7 +246,7 @@ function ensureFloatingButton() {
 
   floatingButton = document.createElement("button");
   floatingButton.type = "button";
-  floatingButton.textContent = "Extract Task";
+  floatingButton.textContent = "Add to Calendar";
   floatingButton.style.position = "fixed";
   floatingButton.style.zIndex = "2147483647";
   floatingButton.style.display = "none";
@@ -219,6 +263,12 @@ function ensureFloatingButton() {
   floatingButton.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
+
+    const manualTriggerEnabled = await isManualTriggerEnabled();
+    if (!manualTriggerEnabled) {
+      floatingButton.style.display = "none";
+      return;
+    }
 
     const selected = getSelectedText();
     if (!selected) {
@@ -237,6 +287,14 @@ function ensureFloatingButton() {
 }
 
 function positionFloatingButton() {
+  isManualTriggerEnabled().then((manualTriggerEnabled) => {
+    if (!manualTriggerEnabled) {
+      if (floatingButton) {
+        floatingButton.style.display = "none";
+      }
+      return;
+    }
+
   const selected = getSelectedText();
   const button = ensureFloatingButton();
 
@@ -260,9 +318,15 @@ function positionFloatingButton() {
   button.style.top = `${Math.max(8, rect.top - 38)}px`;
   button.style.left = `${Math.max(8, rect.left)}px`;
   button.style.display = "block";
+  });
 }
 
 async function triggerManualExtraction() {
+  const manualTriggerEnabled = await isManualTriggerEnabled();
+  if (!manualTriggerEnabled) {
+    return;
+  }
+
   const selected = getSelectedText();
   if (!selected) {
     return;
@@ -273,14 +337,16 @@ async function triggerManualExtraction() {
   relayPayload("manual-selection", payload);
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "trigger-manual-extract") {
-    triggerManualExtraction().then(() => sendResponse({ ok: true }));
-    return true;
-  }
+if (isExtensionContextActive()) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "trigger-manual-extract") {
+      triggerManualExtraction().then(() => sendResponse({ ok: true }));
+      return true;
+    }
 
-  return false;
-});
+    return false;
+  });
+}
 
 document.addEventListener("mouseup", () => {
   setTimeout(positionFloatingButton, 0);
@@ -294,7 +360,8 @@ document.addEventListener("scroll", () => {
 
 async function startAutoDetection() {
   const autoDetectEnabled = await isAutoDetectEnabled();
-  if (!autoDetectEnabled) {
+  const autoReadAllowed = await isAutoReadAllowed();
+  if (!autoDetectEnabled || !autoReadAllowed) {
     return;
   }
 

@@ -17,6 +17,8 @@
   --status-text: #0c4a6e;
   --warning-bg: #fef2f2;
   --warning-line: #fecaca;
+  --success-bg: #dcfce7;
+  --success-line: #86efac;
   --spinner-track: #bfdbfe;
   --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
 }
@@ -40,6 +42,8 @@
     --status-text: #bae6fd;
     --warning-bg: #3f1d1d;
     --warning-line: #7f1d1d;
+    --success-bg: #052e16;
+    --success-line: #166534;
     --spinner-track: #334155;
     --shadow: 0 10px 30px rgba(2, 6, 23, 0.6);
   }
@@ -206,6 +210,17 @@ p {
   display: none;
 }
 
+.success {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--success);
+  background: var(--success-bg);
+  border: 1px solid var(--success-line);
+  border-radius: 8px;
+  padding: 7px;
+  display: none;
+}
+
 .small {
   margin-top: 10px;
   font-size: 11px;
@@ -224,6 +239,25 @@ p {
   display: grid;
   gap: 10px;
   margin-top: 8px;
+}
+
+.extra-schema {
+  margin-top: 10px;
+}
+
+.json-box {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 8px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .field {
