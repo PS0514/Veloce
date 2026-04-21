@@ -1,5 +1,42 @@
 const seenTelegramMessages = new Set();
+const seenAutoPayloads = new Map();
 let floatingButton = null;
+let gmailAutoTimer = null;
+let moodleAutoTimer = null;
+let gmailAutoIntervalId = null;
+let gmailObserverStarted = false;
+let moodleObserverStarted = false;
+let telegramObserverStarted = false;
+let autoBootstrapIntervalId = null;
+const AUTO_DEDUPE_WINDOW_MS = 30000;
+
+function canSendAutoPayload(signature) {
+  const now = Date.now();
+  const lastSentAt = seenAutoPayloads.get(signature) || 0;
+
+  if (now - lastSentAt < AUTO_DEDUPE_WINDOW_MS) {
+    return false;
+  }
+
+  seenAutoPayloads.set(signature, now);
+
+  // Keep map bounded to avoid unbounded growth in long Gmail sessions.
+  if (seenAutoPayloads.size > 100) {
+    let oldestKey = null;
+    let oldestTs = Number.POSITIVE_INFINITY;
+    for (const [key, ts] of seenAutoPayloads.entries()) {
+      if (ts < oldestTs) {
+        oldestTs = ts;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) {
+      seenAutoPayloads.delete(oldestKey);
+    }
+  }
+
+  return true;
+}
 
 function isExtensionContextActive() {
   return typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
@@ -109,7 +146,10 @@ function extractGmailText() {
   const selectors = [
     "div.a3s.aiL",
     "div[data-message-id] div.a3s",
-    "div[role='listitem'] div.a3s"
+    "div[role='listitem'] div.a3s",
+    "div.adn.ads div.a3s",
+    "div.ii.gt div.a3s",
+    "div[role='main'] div[data-message-id]"
   ];
 
   const chunks = [];
@@ -121,7 +161,30 @@ function extractGmailText() {
     }
   }
 
-  return [...new Set(chunks)].join("\n\n").trim();
+  const primary = [...new Set(chunks)].join("\n\n").trim();
+  if (primary) {
+    return primary;
+  }
+
+  // Fallback: capture currently opened mail panel text when Gmail changes internal classes.
+  const mainPanel = document.querySelector("div[role='main']");
+  const fallback = mainPanel?.innerText?.trim() || "";
+  if (!fallback) {
+    const inboxRows = Array.from(document.querySelectorAll("tr.zA")).slice(0, 6);
+    const inboxLines = inboxRows
+      .map((row) => {
+        const sender = row.querySelector(".yX.xY span")?.innerText?.trim() || "";
+        const subject = row.querySelector(".bog")?.innerText?.trim() || "";
+        const snippet = row.querySelector(".y2")?.innerText?.trim() || "";
+        return [sender, subject, snippet].filter(Boolean).join(" | ");
+      })
+      .filter(Boolean);
+
+    return [...new Set(inboxLines)].join("\n").trim();
+  }
+
+  // Avoid sending trivial UI noise while still allowing short but valid email content.
+  return fallback.length >= 40 ? fallback : "";
 }
 
 function extractMoodleText() {
@@ -168,10 +231,22 @@ function getTelegramMessageTexts() {
 }
 
 async function sendAutoExtractionIfAvailable() {
+  const autoDetectEnabled = await isAutoDetectEnabled();
+  const autoReadAllowed = await isAutoReadAllowed();
+  if (!autoDetectEnabled || !autoReadAllowed) {
+    console.debug("[Veloce] Auto scan skipped: auto settings disabled");
+    return;
+  }
+
   const source = detectSource();
+  const locationKey = window.location.href.split("#")[0] + window.location.hash;
   if (source === "gmail") {
     const text = extractGmailText();
     if (text) {
+      const signature = `gmail:${locationKey}:${text.slice(0, 500)}`;
+      if (!canSendAutoPayload(signature)) {
+        return;
+      }
       const payload = await makePayload("gmail", text);
       relayPayload("extracted-payload", payload);
     }
@@ -180,10 +255,83 @@ async function sendAutoExtractionIfAvailable() {
   if (source === "moodle") {
     const text = extractMoodleText();
     if (text) {
+      const signature = `moodle:${locationKey}:${text.slice(0, 500)}`;
+      if (!canSendAutoPayload(signature)) {
+        return;
+      }
       const payload = await makePayload("moodle", text);
       relayPayload("extracted-payload", payload);
     }
   }
+}
+
+function debounceAutoScan(source) {
+  const delayMs = 800;
+
+  if (source === "gmail") {
+    if (gmailAutoTimer) {
+      clearTimeout(gmailAutoTimer);
+    }
+    gmailAutoTimer = setTimeout(() => {
+      sendAutoExtractionIfAvailable();
+    }, delayMs);
+    return;
+  }
+
+  if (source === "moodle") {
+    if (moodleAutoTimer) {
+      clearTimeout(moodleAutoTimer);
+    }
+    moodleAutoTimer = setTimeout(() => {
+      sendAutoExtractionIfAvailable();
+    }, delayMs);
+  }
+}
+
+function startGmailObserver() {
+  if (detectSource() !== "gmail" || gmailObserverStarted) {
+    return;
+  }
+  gmailObserverStarted = true;
+
+  debounceAutoScan("gmail");
+
+  const observer = new MutationObserver(() => {
+    debounceAutoScan("gmail");
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  window.addEventListener("hashchange", () => {
+    debounceAutoScan("gmail");
+  });
+
+  if (!gmailAutoIntervalId) {
+    gmailAutoIntervalId = setInterval(() => {
+      debounceAutoScan("gmail");
+    }, 5000);
+  }
+}
+
+function startMoodleObserver() {
+  if (detectSource() !== "moodle" || moodleObserverStarted) {
+    return;
+  }
+  moodleObserverStarted = true;
+
+  debounceAutoScan("moodle");
+
+  const observer = new MutationObserver(() => {
+    debounceAutoScan("moodle");
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
 }
 
 function findTelegramChatContainer() {
@@ -205,6 +353,12 @@ function findTelegramChatContainer() {
 }
 
 async function pushNewTelegramMessages() {
+  const autoDetectEnabled = await isAutoDetectEnabled();
+  const autoReadAllowed = await isAutoReadAllowed();
+  if (!autoDetectEnabled || !autoReadAllowed) {
+    return;
+  }
+
   const messages = getTelegramMessageTexts();
   const fresh = messages.filter((text) => !seenTelegramMessages.has(text));
 
@@ -218,9 +372,10 @@ async function pushNewTelegramMessages() {
 }
 
 function startTelegramObserver() {
-  if (detectSource() !== "telegram") {
+  if (detectSource() !== "telegram" || telegramObserverStarted) {
     return;
   }
+  telegramObserverStarted = true;
 
   pushNewTelegramMessages();
   const target = findTelegramChatContainer();
@@ -359,14 +514,32 @@ document.addEventListener("scroll", () => {
 });
 
 async function startAutoDetection() {
-  const autoDetectEnabled = await isAutoDetectEnabled();
-  const autoReadAllowed = await isAutoReadAllowed();
-  if (!autoDetectEnabled || !autoReadAllowed) {
-    return;
-  }
-
   sendAutoExtractionIfAvailable();
+  startGmailObserver();
+  startMoodleObserver();
   startTelegramObserver();
 }
 
 startAutoDetection();
+
+if (!autoBootstrapIntervalId) {
+  autoBootstrapIntervalId = setInterval(() => {
+    startAutoDetection();
+  }, 4000);
+}
+
+window.addEventListener("focus", () => {
+  startAutoDetection();
+});
+
+if (isExtensionContextActive()) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+
+    if (changes.auto_detect_mode || changes.auto_read_permissions) {
+      startAutoDetection();
+    }
+  });
+}
