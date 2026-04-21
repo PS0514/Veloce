@@ -4,6 +4,7 @@ let floatingButton = null;
 let gmailAutoTimer = null;
 let moodleAutoTimer = null;
 let gmailAutoIntervalId = null;
+let moodleAutoIntervalId = null;
 let gmailObserverStarted = false;
 let moodleObserverStarted = false;
 let telegramObserverStarted = false;
@@ -95,7 +96,7 @@ function detectSource() {
     return "telegram";
   }
 
-  if (host.includes("moodle")) {
+  if (host.includes("moodle") || host.includes("spectrum.um.edu.my")) {
     return "moodle";
   }
 
@@ -113,6 +114,7 @@ async function makePayload(source, text) {
   return {
     source,
     text,
+    page_url: window.location.href,
     user_id: userId,
     timestamp: new Date().toISOString()
   };
@@ -188,24 +190,126 @@ function extractGmailText() {
 }
 
 function extractMoodleText() {
+  const mainRoot =
+    document.querySelector("#region-main") ||
+    document.querySelector("main[role='main']") ||
+    document.querySelector("#page-content") ||
+    document;
+
+  const lowValuePhrases = new Set([
+    "section outline",
+    "course index",
+    "dashboard",
+    "participants",
+    "badges",
+    "grades"
+  ]);
+
+  function isLowValueMoodleText(text) {
+    const normalized = (text || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!normalized) {
+      return true;
+    }
+
+    if (lowValuePhrases.has(normalized)) {
+      return true;
+    }
+
+    if (normalized.length < 40) {
+      return true;
+    }
+
+    const lines = (text || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    return lines.length <= 2 && normalized.length < 80;
+  }
+
+  function extractMoodleActivitySummary(root) {
+    const activityRows = Array.from(
+      root.querySelectorAll("li.activity, .activity-item, .activityinstance, li[id^='module-']")
+    );
+
+    if (!activityRows.length) {
+      return "";
+    }
+
+    const lines = activityRows
+      .map((row) => {
+        const name =
+          row.querySelector(".instancename")?.innerText?.trim() ||
+          row.querySelector(".activityname")?.innerText?.trim() ||
+          row.querySelector("a")?.innerText?.trim() ||
+          "";
+        const meta = [
+          row.querySelector(".description")?.innerText?.trim() || "",
+          row.querySelector(".availabilityinfo")?.innerText?.trim() || "",
+          row.querySelector(".due, .date")?.innerText?.trim() || ""
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
+        if (!name) {
+          return "";
+        }
+
+        return meta ? `${name} | ${meta}` : name;
+      })
+      .filter(Boolean);
+
+    return [...new Set(lines)].slice(0, 30).join("\n").trim();
+  }
+
   const selectors = [
     ".assignment .intro",
     ".assignintro",
     ".forum-post-container .post-content",
     ".announcement .content",
-    ".activity-description"
+    ".activity-description",
+    ".mod_introbox",
+    ".box.generalbox",
+    ".description .no-overflow",
+    ".quizinfo",
+    ".submissionstatustable"
   ];
 
   const chunks = [];
+  const pageHeading =
+    mainRoot.querySelector("h1")?.innerText?.trim() ||
+    mainRoot.querySelector("h2")?.innerText?.trim() ||
+    "";
+
+  if (pageHeading) {
+    chunks.push(pageHeading);
+  }
+
   for (const selector of selectors) {
-    const nodes = Array.from(document.querySelectorAll(selector));
+    const nodes = Array.from(mainRoot.querySelectorAll(selector));
     const text = uniqueNonEmptyText(nodes);
     if (text) {
       chunks.push(text);
     }
   }
 
-  return [...new Set(chunks)].join("\n\n").trim();
+  const primary = [...new Set(chunks)].join("\n\n").trim();
+  if (primary && !isLowValueMoodleText(primary)) {
+    return primary.slice(0, 5000);
+  }
+
+  const activitySummary = extractMoodleActivitySummary(mainRoot);
+  if (activitySummary && !isLowValueMoodleText(activitySummary)) {
+    return activitySummary.slice(0, 5000);
+  }
+
+  const fallback = (mainRoot.innerText || "").trim();
+  if (!fallback || isLowValueMoodleText(fallback)) {
+    return "";
+  }
+
+  // Keep fallback bounded and avoid extracting very short UI-only fragments.
+  return fallback.length >= 80 ? fallback.slice(0, 5000) : "";
 }
 
 function getTelegramMessageTexts(root = document) {
@@ -346,6 +450,20 @@ function startMoodleObserver() {
     childList: true,
     subtree: true
   });
+
+  window.addEventListener("hashchange", () => {
+    debounceAutoScan("moodle");
+  });
+
+  window.addEventListener("popstate", () => {
+    debounceAutoScan("moodle");
+  });
+
+  if (!moodleAutoIntervalId) {
+    moodleAutoIntervalId = setInterval(() => {
+      debounceAutoScan("moodle");
+    }, 7000);
+  }
 }
 
 function findTelegramChatContainer() {

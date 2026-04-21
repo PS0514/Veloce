@@ -27,6 +27,7 @@
   "host_permissions": [
     "https://mail.google.com/*",
     "https://web.telegram.org/*",
+    "https://spectrum.um.edu.my/*",
     "https://*.moodlecloud.com/*",
     "https://moodle.your-university.edu/*"
   ],
@@ -35,6 +36,7 @@
       "matches": [
         "https://mail.google.com/*",
         "https://web.telegram.org/*",
+        "https://spectrum.um.edu.my/*",
         "https://*.moodlecloud.com/*",
         "https://moodle.your-university.edu/*"
       ],
