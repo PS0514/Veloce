@@ -6,7 +6,8 @@ const NOTIFICATION_ICON_DATA_URI =
 const DEFAULT_SETTINGS = {
   auto_detect_mode: true,
   user_id: "anonymous",
-  webhook_url: ""
+  webhook_url: "",
+  ai_prompt: ""
 };
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -69,7 +70,10 @@ function notifyStatus(status, message) {
 }
 
 async function callWebhook(payload) {
-  const { webhook_url: webhookUrl } = await chrome.storage.local.get(["webhook_url"]);
+  const { webhook_url: webhookUrl, ai_prompt: aiPrompt } = await chrome.storage.local.get([
+    "webhook_url",
+    "ai_prompt"
+  ]);
 
   if (!webhookUrl) {
     setWorkflowState({
@@ -90,7 +94,10 @@ async function callWebhook(payload) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        prompt: aiPrompt || ""
+      }),
       signal: controller.signal
     });
 

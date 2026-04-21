@@ -16,8 +16,17 @@ const els = {
   autoDetectToggle: document.getElementById("autoDetectToggle"),
   userIdInput: document.getElementById("userIdInput"),
   webhookUrlInput: document.getElementById("webhookUrlInput"),
+  promptInput: document.getElementById("promptInput"),
+  resetSettingsBtn: document.getElementById("resetSettingsBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   saveStatus: document.getElementById("saveStatus")
+};
+
+const DEFAULT_SETTINGS = {
+  auto_detect_mode: true,
+  user_id: "anonymous",
+  webhook_url: "",
+  ai_prompt: ""
 };
 
 function truncate(text, max = 120) {
@@ -102,13 +111,15 @@ function renderSettings(state) {
   els.autoDetectToggle.checked = state.auto_detect_mode !== false;
   els.userIdInput.value = state.user_id || "anonymous";
   els.webhookUrlInput.value = state.webhook_url || "";
+  els.promptInput.value = state.ai_prompt || "";
 }
 
 function saveSettings() {
   const next = {
     auto_detect_mode: els.autoDetectToggle.checked,
     user_id: (els.userIdInput.value || "anonymous").trim(),
-    webhook_url: (els.webhookUrlInput.value || "").trim()
+    webhook_url: (els.webhookUrlInput.value || "").trim(),
+    ai_prompt: (els.promptInput.value || "").trim()
   };
 
   chrome.storage.local.set(next, () => {
@@ -116,9 +127,16 @@ function saveSettings() {
   });
 }
 
+function resetAllSettings() {
+  chrome.storage.local.set(DEFAULT_SETTINGS, () => {
+    renderSettings(DEFAULT_SETTINGS);
+    els.saveStatus.textContent = "Defaults restored.";
+  });
+}
+
 function refresh() {
   chrome.storage.local.get(
-    ["aiResponse", "lastPayload", "workflowState", "auto_detect_mode", "user_id", "webhook_url"],
+    ["aiResponse", "lastPayload", "workflowState", "auto_detect_mode", "user_id", "webhook_url", "ai_prompt"],
     (state) => {
       renderAiResponse(state.aiResponse || {});
       renderPayload(state.lastPayload);
@@ -130,6 +148,7 @@ function refresh() {
 
 els.resultTabBtn.addEventListener("click", () => setTab("result"));
 els.settingsTabBtn.addEventListener("click", () => setTab("settings"));
+els.resetSettingsBtn.addEventListener("click", resetAllSettings);
 els.saveSettingsBtn.addEventListener("click", saveSettings);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {

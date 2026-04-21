@@ -214,6 +214,34 @@
         color: var(--text);
       }
 
+      .field textarea {
+        width: 100%;
+        min-height: 88px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 12px;
+        color: var(--text);
+        font-family: inherit;
+      }
+
+      .secondary-btn {
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--text);
+        font-weight: 700;
+        border-radius: 9px;
+        padding: 9px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .secondary-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
       .switch {
         display: flex;
         align-items: center;
@@ -307,6 +335,13 @@
               <span class="label">n8n Webhook URL</span>
               <input id="webhookUrlInput" type="url" placeholder="https://..." />
             </label>
+
+            <label class="field" for="promptInput">
+              <span class="label">AI Prompt / Instructions</span>
+              <textarea id="promptInput" placeholder="Example: Extract only actionable tasks, preserve deadlines, and summarize the request clearly."></textarea>
+            </label>
+
+            <button class="secondary-btn" id="resetSettingsBtn" type="button">Reset to Default</button>
 
             <button class="save-btn" id="saveSettingsBtn" type="button">Save Settings</button>
             <div class="small" id="saveStatus">Changes are persisted in local storage.</div>
