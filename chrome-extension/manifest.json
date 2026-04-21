@@ -5,7 +5,19 @@
   "version": "0.1.0",
   "action": {
     "default_title": "Veloce",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "Veloce_Logo.png",
+      "32": "Veloce_Logo.png",
+      "48": "Veloce_Logo.png",
+      "128": "Veloce_Logo.png"
+    }
+  },
+  "icons": {
+    "16": "Veloce_Logo.png",
+    "32": "Veloce_Logo.png",
+    "48": "Veloce_Logo.png",
+    "128": "Veloce_Logo.png"
   },
   "background": {
     "service_worker": "background.js",
