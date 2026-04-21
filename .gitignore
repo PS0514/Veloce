@@ -1,0 +1,7 @@
+# Ignore n8n local database and credentials
+n8n_data/
+.env
+veloce_session.session
+
+# Allow tracking of exported workflows
+!workflows/
