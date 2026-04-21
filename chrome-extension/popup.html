@@ -6,16 +6,50 @@
     <title>Veloce</title>
     <style>
       :root {
+        color-scheme: light dark;
         --bg-1: #f1f5f9;
         --bg-2: #dbeafe;
         --card: #ffffff;
+        --surface: #ffffff;
+        --input-bg: #ffffff;
         --text: #0f172a;
         --muted: #475569;
         --line: #dbe4ef;
         --accent: #0369a1;
+        --accent-hover: #075985;
         --success: #15803d;
         --warn: #a16207;
         --danger: #b91c1c;
+        --status-bg: #e0f2fe;
+        --status-text: #0c4a6e;
+        --warning-bg: #fef2f2;
+        --warning-line: #fecaca;
+        --spinner-track: #bfdbfe;
+        --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-1: #0b1120;
+          --bg-2: #13203a;
+          --card: #0f172a;
+          --surface: #111b31;
+          --input-bg: #0b1325;
+          --text: #e2e8f0;
+          --muted: #94a3b8;
+          --line: #24344f;
+          --accent: #38bdf8;
+          --accent-hover: #7dd3fc;
+          --success: #4ade80;
+          --warn: #facc15;
+          --danger: #f87171;
+          --status-bg: #082f49;
+          --status-text: #bae6fd;
+          --warning-bg: #3f1d1d;
+          --warning-line: #7f1d1d;
+          --spinner-track: #334155;
+          --shadow: 0 10px 30px rgba(2, 6, 23, 0.6);
+        }
       }
 
       * {
@@ -43,7 +77,7 @@
 
       .tab-btn {
         border: 1px solid var(--line);
-        background: #ffffff;
+        background: var(--surface);
         color: var(--muted);
         border-radius: 999px;
         font-size: 12px;
@@ -63,7 +97,7 @@
         border-radius: 12px;
         padding: 12px;
         background: var(--card);
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        box-shadow: var(--shadow);
       }
 
       h1 {
@@ -83,8 +117,8 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        background: #e0f2fe;
-        color: #0c4a6e;
+        background: var(--status-bg);
+        color: var(--status-text);
         font-weight: 700;
         font-size: 11px;
         border-radius: 999px;
@@ -139,8 +173,8 @@
 
       .warning {
         margin-top: 8px;
-        border: 1px solid #fecaca;
-        background: #fef2f2;
+        border: 1px solid var(--warning-line);
+        background: var(--warning-bg);
         color: var(--danger);
         border-radius: 8px;
         padding: 7px;
@@ -160,7 +194,7 @@
       .spinner {
         width: 14px;
         height: 14px;
-        border: 2px solid #bfdbfe;
+        border: 2px solid var(--spinner-track);
         border-top-color: var(--accent);
         border-radius: 50%;
         animation: spin 0.9s linear infinite;
@@ -211,6 +245,7 @@
         border-radius: 8px;
         padding: 8px;
         font-size: 12px;
+        background: var(--input-bg);
         color: var(--text);
       }
 
@@ -222,13 +257,14 @@
         border-radius: 8px;
         padding: 8px;
         font-size: 12px;
+        background: var(--input-bg);
         color: var(--text);
         font-family: inherit;
       }
 
       .secondary-btn {
         border: 1px solid var(--line);
-        background: #ffffff;
+        background: var(--surface);
         color: var(--text);
         font-weight: 700;
         border-radius: 9px;
@@ -264,7 +300,7 @@
       }
 
       .save-btn:hover {
-        background: #075985;
+        background: var(--accent-hover);
       }
     </style>
   </head>
