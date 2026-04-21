@@ -208,20 +208,34 @@ function extractMoodleText() {
   return [...new Set(chunks)].join("\n\n").trim();
 }
 
-function getTelegramMessageTexts() {
+function getTelegramMessageTexts(root = document) {
   const selectors = [
     ".message .text-content",
-    ".message .text-content span",
-    "div.message .text-content",
-    "div.bubbles-group .text-content"
+    ".Message .text-content",
+    ".message-list-item .text-content",
+    ".message .translatable-message",
+    ".Message .translatable-message",
+    "[data-mid] .text-content",
+    ".bubbles .text-content"
   ];
 
   const values = [];
   for (const selector of selectors) {
-    const nodes = document.querySelectorAll(selector);
+    const nodes = root.querySelectorAll(selector);
     nodes.forEach((node) => {
       const text = node?.innerText?.trim();
       if (text) {
+        values.push(text);
+      }
+    });
+  }
+
+  if (!values.length) {
+    // Fallback for Telegram UI variants where message text is nested under generic bubble content blocks.
+    const fallbackNodes = root.querySelectorAll("[data-mid], .message, .Message");
+    fallbackNodes.forEach((node) => {
+      const text = node?.innerText?.trim();
+      if (text && text.length > 1) {
         values.push(text);
       }
     });
@@ -337,7 +351,11 @@ function startMoodleObserver() {
 function findTelegramChatContainer() {
   const selectors = [
     "#MiddleColumn",
+    "#column-center",
+    "#column-middle",
     ".chat",
+    ".chat-main",
+    ".middle-column",
     ".messages-container",
     ".bubbles"
   ];
@@ -359,7 +377,8 @@ async function pushNewTelegramMessages() {
     return;
   }
 
-  const messages = getTelegramMessageTexts();
+  const root = findTelegramChatContainer();
+  const messages = getTelegramMessageTexts(root);
   const fresh = messages.filter((text) => !seenTelegramMessages.has(text));
 
   if (!fresh.length) {
