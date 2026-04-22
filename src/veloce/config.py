@@ -11,6 +11,7 @@ class ListenerConfig:
     channel_chat_ids: Set[int]
     channel_usernames: Set[str]
     keywords: list[str]
+    startup_history_limit: int
 
 
 def parse_channel_filters(raw_filters: str) -> tuple[Set[int], Set[str]]:
@@ -33,10 +34,21 @@ def parse_keywords(raw_keywords: str) -> list[str]:
     return [part.strip().lower() for part in raw_keywords.split(",") if part.strip()]
 
 
+def parse_positive_int(raw_value: str | None, default: int) -> int:
+    if raw_value is None:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default
+    return max(0, parsed)
+
+
 def load_listener_config() -> ListenerConfig:
     channels_raw = os.getenv("TELEGRAM_CHANNEL_FILTERS", "")
     keywords_raw = os.getenv("LISTENER_KEYWORDS", "")
     channel_chat_ids, channel_usernames = parse_channel_filters(channels_raw)
+    startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "3"), 3)
 
     return ListenerConfig(
         api_id=os.getenv("TELEGRAM_API_ID"),
@@ -45,4 +57,5 @@ def load_listener_config() -> ListenerConfig:
         channel_chat_ids=channel_chat_ids,
         channel_usernames=channel_usernames,
         keywords=parse_keywords(keywords_raw),
+        startup_history_limit=startup_history_limit,
     )
