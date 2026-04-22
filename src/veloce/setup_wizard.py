@@ -138,18 +138,18 @@ def google_oauth_start():
     return redirect(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
 
 
-@APP.route("/google/oauth/callback")
+@APP.route("/google/oauth/callback", methods=["GET", "POST"])
 def google_oauth_callback():
     expected_state = session.get("google_oauth_state")
-    received_state = request.args.get("state", "")
+    received_state = request.values.get("state", "")
     if not expected_state or received_state != expected_state:
         abort(400, description="Invalid Google OAuth state")
 
-    error = request.args.get("error")
+    error = request.values.get("error")
     if error:
         return render_template("setup_wizard.html", values=default_values(), channels=[], google_calendars=[], success="", error=f"Google login failed: {error}", info="", google_info="", service_statuses=[], services_summary="")
 
-    code = request.args.get("code", "").strip()
+    code = request.values.get("code", "").strip()
     if not code:
         abort(400, description="Missing Google OAuth code")
 
@@ -186,24 +186,7 @@ def google_oauth_callback():
     )
     session.pop("google_oauth_state", None)
 
-    message_bits = ["Google login completed successfully."]
-    if token_type:
-        message_bits.append(f"Token type: {token_type}")
-    if expires_in:
-        message_bits.append(f"Expires in: {expires_in} seconds")
-
-    return render_template(
-        "setup_wizard.html",
-        values=default_values(),
-        channels=[],
-        google_calendars=[],
-        success=" ".join(message_bits),
-        error="",
-        info="",
-        google_info="You can now list calendars from the authenticated account.",
-        service_statuses=[],
-        services_summary="",
-    )
+    return redirect(url_for("index"))
 
 
 def get_google_access_token(values: dict[str, str | bool]) -> str:

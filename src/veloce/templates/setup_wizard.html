@@ -380,7 +380,7 @@
         <div class="info">{{ info }}</div>
       {% endif %}
 
-      <form method="post">
+      <form method="post" action="{{ url_for('index') }}">
         <div class="actions">
           <button type="submit" name="action" value="save">Save configuration</button>
           <button type="submit" name="action" value="save_restart" style="margin-left: 8px; background: #264653;">Save and restart services</button>
@@ -554,7 +554,7 @@
 
           <div class="actions" style="margin-top: 12px;">
             <a href="{{ url_for('google_oauth_start') }}" style="display: inline-block; text-decoration: none; border: 0; border-radius: 12px; background: linear-gradient(120deg, #06d6a0, #118ab2); color: #fff; font-weight: 700; letter-spacing: 0.2px; padding: 11px 16px; box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);">Sign in with Google</a>
-            <button type="submit" name="action" value="list_google_calendars" style="margin-left: 8px;">List my Google calendars</button>
+            <button type="submit" name="action" value="list_google_calendars" style="margin-left: 8px;">Refresh Google calendars</button>
           </div>
 
           {% if google_info %}
