@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   n8n:
     image: docker.n8n.io/n8nio/n8n
@@ -8,18 +6,19 @@ services:
     ports:
       - "5678:5678"
     env_file:
-      - .env
+      - ../.env
     volumes:
-      - ./n8n_data:/home/node/.n8n
+      - ../n8n_data:/home/node/.n8n
 
   telegram_listener:
-    build: . # Points to a simple Dockerfile for your Python script
+    build:
+      context: ..
+      dockerfile: deploy/listener.Dockerfile
     container_name: veloce_listener
     restart: unless-stopped
     depends_on:
       - n8n
     env_file:
-      - .env
+      - ../.env
     volumes:
-      # Mount the folder so the container can read the generated session file
-      - .:/app
+      - ..:/app

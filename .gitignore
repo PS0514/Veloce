@@ -2,6 +2,12 @@
 n8n_data/
 .env
 veloce_session.session
+.venv/
+__pycache__/
+*.pyc
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Allow tracking of exported workflows
 !workflows/

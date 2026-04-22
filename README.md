@@ -55,6 +55,34 @@ Chrome Extension
 
 ---
 
+# Quickstart
+
+1. Install dependencies:
+	- `pip install -r requirements.txt`
+2. Run setup wizard:
+	- `python scripts/run_setup.py`
+3. In the setup page:
+	- Telegram API ID/API Hash auto-fill from `.env` if already present.
+	- If you do not have Telegram API credentials yet, create them at `https://my.telegram.org`:
+	  - Log in with your phone number.
+	  - Open **API development tools**.
+	  - Create an app (name + short name).
+	  - Copy **api_id** and **api_hash** into the wizard.
+	- Click **Save configuration** once with **Run Telegram login now** enabled to authorize `veloce_session`.
+	- Click **List my channels** to fetch your Telegram chats/channels.
+	- Use search + sort (**Latest message** or **Name**) to find channels quickly, then click **Use selected channels** to populate the filter field.
+	- **Keywords are optional**: leave keywords empty to process all messages from selected channels.
+4. Run listener manually:
+	- `python scripts/run_listener.py`
+5. Or run with Docker compose:
+	- `docker compose -f deploy/docker-compose.yaml up -d`
+
+Compatibility shortcuts still available:
+- `python setup.py`
+- `python listener.py`
+
+---
+
 
 # 🏆 Impact
 
