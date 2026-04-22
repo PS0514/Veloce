@@ -2,6 +2,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from veloce.orchestrator.logging_utils import get_logger, log_info
+
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class ContextRow:
@@ -19,6 +23,7 @@ class SQLiteStore:
         path = Path(db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(path)
+        log_info(logger, "db_store_init", db_path=self.db_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -90,6 +95,7 @@ class SQLiteStore:
                 END
                 """
             )
+            log_info(logger, "db_store_ready", db_path=self.db_path)
 
     def ingest_context(self, row: ContextRow) -> bool:
         with self._connect() as conn:
@@ -109,7 +115,16 @@ class SQLiteStore:
                     row.date,
                 ),
             )
-            return cursor.rowcount > 0
+            inserted = cursor.rowcount > 0
+            log_info(
+                logger,
+                "db_ingest_context",
+                chat_id=row.chat_id,
+                message_id=row.message_id,
+                inserted=inserted,
+                source=row.source,
+            )
+            return inserted
 
     def retrieve_context(
         self,
@@ -121,6 +136,16 @@ class SQLiteStore:
     ) -> list[sqlite3.Row]:
         query = query.strip()
         fetch_limit = max(limit * 5, 20)
+
+        log_info(
+            logger,
+            "db_retrieve_context_start",
+            chat_id=chat_id,
+            query=query,
+            limit=limit,
+            since=since,
+            fetch_limit=fetch_limit,
+        )
 
         with self._connect() as conn:
             base_params: list[object] = [chat_id]
@@ -141,6 +166,13 @@ class SQLiteStore:
                 fts_params = [*base_params, query, fetch_limit]
                 rows = conn.execute(sql, fts_params).fetchall()
                 if rows:
+                    log_info(
+                        logger,
+                        "db_retrieve_context_done",
+                        chat_id=chat_id,
+                        mode="fts",
+                        rows=len(rows),
+                    )
                     return rows
 
             sql = f"""
@@ -151,4 +183,12 @@ class SQLiteStore:
                 LIMIT ?
             """
             fallback_params = [*base_params, fetch_limit]
-            return conn.execute(sql, fallback_params).fetchall()
+            rows = conn.execute(sql, fallback_params).fetchall()
+            log_info(
+                logger,
+                "db_retrieve_context_done",
+                chat_id=chat_id,
+                mode="fallback",
+                rows=len(rows),
+            )
+            return rows

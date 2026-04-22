@@ -1,10 +1,14 @@
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import requests
 
+from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import GlmExtraction, NormalizedInbound, TaskCandidate
+
+logger = get_logger(__name__)
 
 
 class GlmClient:
@@ -13,8 +17,16 @@ class GlmClient:
         self.model = os.getenv("ZAI_MODEL", "glm-4.5").strip() or "glm-4.5"
         self.base_url = os.getenv("ZAI_CHAT_COMPLETIONS_URL", "").strip()
 
-    def _fallback_extraction(self, inbound: NormalizedInbound) -> GlmExtraction:
+    def _fallback_extraction(self, inbound: NormalizedInbound, request_id: str | None = None) -> GlmExtraction:
         # Conservative fallback if API is not configured: no scheduling action.
+        log_warning(
+            logger,
+            "glm_fallback",
+            request_id=request_id,
+            reason="missing_config",
+            model=self.model,
+            timezone=inbound.timezone,
+        )
         return GlmExtraction(
             tasks=[],
             metadata={
@@ -24,9 +36,16 @@ class GlmClient:
             },
         )
 
-    def extract_tasks(self, inbound: NormalizedInbound) -> GlmExtraction:
+    @staticmethod
+    def _truncate(value: str, limit: int = 240) -> str:
+        trimmed = value.strip().replace("\n", " ")
+        if len(trimmed) <= limit:
+            return trimmed
+        return f"{trimmed[:limit]}..."
+
+    def extract_tasks(self, inbound: NormalizedInbound, request_id: str | None = None) -> GlmExtraction:
         if not self.api_key or not self.base_url:
-            return self._fallback_extraction(inbound)
+            return self._fallback_extraction(inbound, request_id=request_id)
 
         now = datetime.now(timezone.utc).isoformat()
         system_prompt = "\n".join(
@@ -65,9 +84,38 @@ class GlmClient:
             "Content-Type": "application/json",
         }
 
+        started = time.perf_counter()
+        log_info(
+            logger,
+            "glm_request_start",
+            request_id=request_id,
+            model=self.model,
+            url=self.base_url,
+            text_len=len(inbound.raw_text),
+        )
         response = requests.post(self.base_url, headers=headers, json=payload, timeout=25)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError:
+            log_warning(
+                logger,
+                "glm_request_failed",
+                request_id=request_id,
+                status=response.status_code,
+                body=self._truncate(response.text),
+            )
+            raise
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         data = response.json()
+        usage = data.get("usage") if isinstance(data, dict) else None
+        log_info(
+            logger,
+            "glm_request_done",
+            request_id=request_id,
+            status=response.status_code,
+            elapsed_ms=elapsed_ms,
+            usage=usage,
+        )
 
         content = None
         choices = data.get("choices", [])
@@ -78,10 +126,18 @@ class GlmClient:
 
         if isinstance(content, dict):
             parsed = content
+            log_info(logger, "glm_response_content", request_id=request_id, type="dict")
         else:
             raw = str(content).strip()
             if raw.startswith("```"):
                 raw = raw.replace("```json", "").replace("```", "").strip()
+            log_info(
+                logger,
+                "glm_response_content",
+                request_id=request_id,
+                type="text",
+                preview=self._truncate(raw),
+            )
             parsed = json.loads(raw)
 
         raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
@@ -106,6 +162,8 @@ class GlmClient:
                     clarification_question=item.get("clarification_question"),
                 )
             )
+
+        log_info(logger, "glm_parse_done", request_id=request_id, parsed_tasks=len(tasks))
 
         return GlmExtraction(
             tasks=tasks,

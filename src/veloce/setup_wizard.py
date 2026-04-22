@@ -12,6 +12,9 @@ from telethon.sync import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
 from veloce.config import load_listener_config
+from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
+
+logger = get_logger(__name__)
 
 APP = Flask(__name__)
 ROOT = Path(__file__).resolve().parents[2]
@@ -483,10 +486,19 @@ def compose_base_command() -> list[str]:
 
 def run_compose(args: list[str]) -> str:
     command = compose_base_command() + args
+    log_info(logger, "setup_compose_start", command=" ".join(command))
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding='utf-8', errors='replace')
     output = (result.stdout or result.stderr or "").strip()
     if result.returncode != 0:
+        log_warning(
+            logger,
+            "setup_compose_failed",
+            command=" ".join(command),
+            returncode=result.returncode,
+            output_preview=output[:240],
+        )
         raise RuntimeError(output or "Docker compose command failed.")
+    log_info(logger, "setup_compose_done", command=" ".join(command), output_preview=output[:240])
     return output
 
 
@@ -547,6 +559,7 @@ def index():
     
     if request.method == "POST":
         action = request.form.get("action", "save")
+        log_info(logger, "setup_action_received", action=action)
         values.update(
             {
                 "telegram_api_id": request.form.get("telegram_api_id", "").strip(),
@@ -631,6 +644,10 @@ def index():
                     error = f"Unknown action: {action}"
             except Exception as exc:
                 error = f"Setup failed: {exc}"
+                log_warning(logger, "setup_action_failed", action=action, error=exc)
+
+        if not error:
+            log_info(logger, "setup_action_done", action=action, success=success or None, info=info or None)
 
         service_statuses, services_summary = get_services_status()
 
@@ -675,7 +692,7 @@ def launch_browser() -> None:
 
 
 def run_setup_wizard() -> None:
-    print("Opening Veloce setup wizard at http://127.0.0.1:8765")
+    log_info(logger, "setup_wizard_start", url="http://127.0.0.1:8765")
     threading.Timer(1.0, launch_browser).start()
     APP.run(host="127.0.0.1", port=8765, debug=False)
 

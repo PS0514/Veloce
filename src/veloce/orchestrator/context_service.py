@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 
+from veloce.orchestrator.logging_utils import get_logger, log_info
 from veloce.orchestrator.db import SQLiteStore
 from veloce.orchestrator.models import ContextItem, ContextRetrieveResponse
+
+logger = get_logger(__name__)
 
 
 class ContextService:
@@ -41,12 +44,22 @@ class ContextService:
         limit: int,
         since: str | None,
     ) -> ContextRetrieveResponse:
+        log_info(
+            logger,
+            "context_retrieve_start",
+            chat_id=chat_id,
+            query=query,
+            limit=limit,
+            since=since,
+        )
         rows = self.store.retrieve_context(chat_id=chat_id, query=query, limit=limit, since=since)
 
         scored: list[ContextItem] = []
+        filtered_low_score = 0
         for row in rows:
             score = self._score_row(query, row["message"], row["date"])
             if query and score <= 0.15:
+                filtered_low_score += 1
                 continue
             scored.append(
                 ContextItem(
@@ -61,6 +74,14 @@ class ContextService:
             )
 
         top = sorted(scored, key=lambda item: item.score, reverse=True)[:limit]
+        log_info(
+            logger,
+            "context_retrieve_done",
+            chat_id=chat_id,
+            db_rows=len(rows),
+            filtered_low_score=filtered_low_score,
+            returned=len(top),
+        )
         return ContextRetrieveResponse(
             chat_id=chat_id,
             query=query,

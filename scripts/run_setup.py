@@ -6,7 +6,12 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from veloce.orchestrator.logging_utils import configure_logging, get_logger, log_info
 from veloce.setup_wizard import run_setup_wizard
 
+configure_logging()
+logger = get_logger(__name__)
+
 if __name__ == "__main__":
+    log_info(logger, "setup_wizard_bootstrap_start", url="http://127.0.0.1:8765")
     run_setup_wizard()

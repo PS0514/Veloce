@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from veloce.orchestrator.glm_client import GlmClient
+from veloce.orchestrator.logging_utils import get_logger, log_info
 from veloce.orchestrator.models import (
     ContextItem,
     NormalizedInbound,
@@ -9,6 +10,8 @@ from veloce.orchestrator.models import (
     TaskCandidate,
 )
 from veloce.orchestrator.scheduling_engine import SchedulingEngine
+
+logger = get_logger(__name__)
 
 
 class SchedulerPipeline:
@@ -58,9 +61,37 @@ class SchedulerPipeline:
         *,
         inbound: NormalizedInbound,
         retrieved_context: list[ContextItem] | None = None,
+        request_id: str | None = None,
     ) -> SchedulerResponse:
-        extraction = self.glm_client.extract_tasks(inbound)
+        log_info(
+            logger,
+            "pipeline_glm_extract_start",
+            request_id=request_id,
+            source=inbound.source,
+            chat_id=inbound.chat_id,
+        )
+        extraction = self.glm_client.extract_tasks(inbound, request_id=request_id)
+        log_info(
+            logger,
+            "pipeline_glm_extract_done",
+            request_id=request_id,
+            tasks=len(extraction.tasks),
+            metadata=extraction.metadata,
+        )
+
         selected = self._select_task(extraction.tasks)
+        if selected is not None:
+            log_info(
+                logger,
+                "pipeline_task_selected",
+                request_id=request_id,
+                task=selected.task_name,
+                deadline=selected.deadline_iso,
+                confidence=round(selected.confidence, 3),
+                needs_clarification=selected.needs_clarification,
+            )
+        else:
+            log_info(logger, "pipeline_task_selected", request_id=request_id, task=None)
 
         if selected is None:
             return SchedulerResponse(
@@ -72,6 +103,12 @@ class SchedulerPipeline:
 
         if selected.needs_clarification or selected.confidence < self.min_confidence_for_auto:
             question = selected.clarification_question or "I need a bit more detail before scheduling this."
+            logger.info(
+                "pipeline_needs_clarification request_id=%s reason=confidence_or_flag confidence=%.2f min=%.2f",
+                request_id,
+                selected.confidence,
+                self.min_confidence_for_auto,
+            )
             return SchedulerResponse(
                 scheduled=False,
                 selected_task=selected,
@@ -82,6 +119,12 @@ class SchedulerPipeline:
             )
 
         if retrieved_context is not None and len(retrieved_context) == 0:
+            log_info(
+                logger,
+                "pipeline_needs_context",
+                request_id=request_id,
+                reason="empty_retrieved_context",
+            )
             return SchedulerResponse(
                 scheduled=False,
                 selected_task=selected,
@@ -91,7 +134,23 @@ class SchedulerPipeline:
                 state="decision_needs_context",
             )
 
-        schedule_result = self.scheduling_engine.schedule(task=selected, timezone_name=inbound.timezone)
+        schedule_result = self.scheduling_engine.schedule(
+            task=selected,
+            timezone_name=inbound.timezone,
+            request_id=request_id,
+        )
+        log_info(
+            logger,
+            "pipeline_schedule_done",
+            request_id=request_id,
+            state=schedule_result.state,
+            scheduled=schedule_result.scheduled,
+            reason=schedule_result.reason,
+            calendar_event_id=schedule_result.calendar_event_id,
+            calendar_link=schedule_result.calendar_link,
+            proposed_start=schedule_result.proposed_start,
+            proposed_end=schedule_result.proposed_end,
+        )
         return SchedulerResponse(
             scheduled=schedule_result.scheduled,
             selected_task=selected,

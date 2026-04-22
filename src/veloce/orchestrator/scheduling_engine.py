@@ -5,7 +5,10 @@ from urllib.parse import quote
 
 import requests
 
+from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import TaskCandidate
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -215,8 +218,25 @@ class SchedulingEngine:
 
         return None
 
-    def schedule(self, *, task: TaskCandidate, timezone_name: str) -> ScheduleResult:
+    def schedule(
+        self,
+        *,
+        task: TaskCandidate,
+        timezone_name: str,
+        request_id: str | None = None,
+    ) -> ScheduleResult:
+        log_info(
+            logger,
+            "schedule_start",
+            request_id=request_id,
+            task=task.task_name,
+            deadline=task.deadline_iso,
+            duration_minutes=task.estimated_duration_minutes,
+            timezone=timezone_name,
+        )
+
         if not self.calendar_client.enabled:
+            log_info(logger, "schedule_skipped", request_id=request_id, reason="calendar_disabled")
             return ScheduleResult(
                 scheduled=False,
                 reason="Google sync is disabled",
@@ -227,6 +247,12 @@ class SchedulingEngine:
         try:
             deadline_utc = datetime.fromisoformat(task.deadline_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
         except ValueError:
+            log_warning(
+                logger,
+                "schedule_invalid_deadline",
+                request_id=request_id,
+                deadline=task.deadline_iso,
+            )
             return ScheduleResult(
                 scheduled=False,
                 reason="Invalid deadline returned by GLM",
@@ -236,6 +262,13 @@ class SchedulingEngine:
             )
 
         if deadline_utc <= now_utc:
+            log_info(
+                logger,
+                "schedule_deadline_past",
+                request_id=request_id,
+                now=now_utc.isoformat(),
+                deadline=deadline_utc.isoformat(),
+            )
             return ScheduleResult(
                 scheduled=False,
                 reason="Deadline is in the past",
@@ -246,7 +279,9 @@ class SchedulingEngine:
 
         try:
             busy = self.calendar_client.list_busy_intervals(time_min=now_utc, time_max=deadline_utc)
+            log_info(logger, "schedule_busy_intervals", request_id=request_id, count=len(busy))
         except Exception as exc:
+            logger.exception("schedule_calendar_read_failed request_id=%s error=%s", request_id, exc)
             return ScheduleResult(
                 scheduled=False,
                 reason=f"Failed to read calendar availability: {exc}",
@@ -260,6 +295,7 @@ class SchedulingEngine:
             busy=busy,
         )
         if found is None:
+            log_info(logger, "schedule_no_slot", request_id=request_id)
             return ScheduleResult(
                 scheduled=False,
                 reason="No free slot before deadline",
@@ -267,8 +303,23 @@ class SchedulingEngine:
             )
 
         proposed_start, proposed_end = found
+        log_info(
+            logger,
+            "schedule_slot_found",
+            request_id=request_id,
+            start=proposed_start.isoformat(),
+            end=proposed_end.isoformat(),
+        )
         conflict = self._detect_clash(proposed_start, proposed_end, busy)
         if conflict is not None:
+            log_info(
+                logger,
+                "schedule_conflict_detected",
+                request_id=request_id,
+                conflict=conflict.summary,
+                conflict_start=conflict.start.isoformat(),
+                conflict_end=conflict.end.isoformat(),
+            )
             return ScheduleResult(
                 scheduled=False,
                 reason="Proposed slot conflicts with existing event",
@@ -287,11 +338,20 @@ class SchedulingEngine:
                 timezone_name=timezone_name,
             )
         except Exception as exc:
+            logger.exception("schedule_calendar_create_failed request_id=%s error=%s", request_id, exc)
             return ScheduleResult(
                 scheduled=False,
                 reason=f"Failed to create calendar event: {exc}",
                 state="calendar_create_failed",
             )
+
+        log_info(
+            logger,
+            "schedule_success",
+            request_id=request_id,
+            event_id=event.get("id"),
+            link=event.get("htmlLink"),
+        )
 
         return ScheduleResult(
             scheduled=True,
