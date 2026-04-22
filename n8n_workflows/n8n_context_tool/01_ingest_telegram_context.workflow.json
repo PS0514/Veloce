@@ -1,0 +1,143 @@
+{
+  "name": "Veloce - Telegram Context Ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-context-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "Webhook_Ingest",
+      "name": "Webhook Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst required = ['source', 'message_id', 'chat_id', 'message'];\nfor (const key of required) {\n  if (body[key] === undefined || body[key] === null || body[key] === '') {\n    throw new Error(`Missing required field: ${key}`);\n  }\n}\n\nconst chatId = Number(body.chat_id);\nconst messageId = Number(body.message_id);\nif (!Number.isFinite(chatId) || !Number.isFinite(messageId)) {\n  throw new Error('chat_id and message_id must be numeric');\n}\n\nreturn [{\n  json: {\n    source: String(body.source),\n    message_id: messageId,\n    sender_id: body.sender_id == null ? null : Number(body.sender_id),\n    chat_id: chatId,\n    chat_title: body.chat_title ?? null,\n    message: String(body.message),\n    date: body.date ?? null\n  }\n}];"
+      },
+      "id": "Code_Normalize",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS telegram_context (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  chat_id INTEGER NOT NULL,\n  message_id INTEGER NOT NULL,\n  sender_id INTEGER,\n  chat_title TEXT,\n  message TEXT NOT NULL,\n  source TEXT NOT NULL,\n  date TEXT,\n  inserted_at TEXT NOT NULL DEFAULT (datetime('now')),\n  UNIQUE(chat_id, message_id)\n);"
+      },
+      "id": "SQLite_CreateTable",
+      "name": "Ensure Table",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        760,
+        160
+      ],
+      "credentials": {
+        "sqlite": {
+          "id": "REPLACE_WITH_SQLITE_CREDENTIAL_ID",
+          "name": "SQLite"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT OR IGNORE INTO telegram_context (chat_id, message_id, sender_id, chat_title, message, source, date)\nVALUES (\n  {{$json.chat_id}},\n  {{$json.message_id}},\n  {{$json.sender_id === null ? 'NULL' : $json.sender_id}},\n  {{$json.chat_title ? '\'' + $json.chat_title.replace(/\\'/g, \"''\") + '\'' : 'NULL'}},\n  '{{ $json.message.replace(/\\'/g, \"''\") }}',\n  '{{ $json.source.replace(/\\'/g, \"''\") }}',\n  {{$json.date ? '\'' + $json.date + '\'' : 'NULL'}}\n);\n\nCREATE INDEX IF NOT EXISTS idx_telegram_context_chat_date\nON telegram_context(chat_id, date DESC);"
+      },
+      "id": "SQLite_Insert",
+      "name": "Insert Context",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        760,
+        320
+      ],
+      "credentials": {
+        "sqlite": {
+          "id": "REPLACE_WITH_SQLITE_CREDENTIAL_ID",
+          "name": "SQLite"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"ok\": true, \"stored\": true, \"chat_id\": $json.chat_id, \"message_id\": $json.message_id } }}",
+        "options": {}
+      },
+      "id": "Respond_OK",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1020,
+        240
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Ingest": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Ensure Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Context": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Table": {
+      "main": [
+        [
+          {
+            "node": "Insert Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "00000000-0000-0000-0000-000000000001",
+  "id": "veloce-telegram-context-ingest"
+}

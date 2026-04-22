@@ -16,3 +16,21 @@ Returns the JSON defined in `/glm/schema.json`.
 ## Error Handling
 - **400:** Invalid JSON structure.
 - **422:** Z.AI could not identify any entities (Empty `entities` array).
+
+## Telegram Context Tool (n8n)
+
+### Ingest Endpoint
+`POST /telegram-context-ingest`
+
+Used by the Telegram listener to persist inbound messages for later AI retrieval.
+
+### Retrieval Endpoint
+`POST /telegram-context-retrieve`
+
+Request fields:
+- `chat_id` (required, number)
+- `query` (optional, string)
+- `limit` (optional, number, default 8)
+- `since` (optional, ISO date-time)
+
+Returns ranked context snippets for AI tool usage.

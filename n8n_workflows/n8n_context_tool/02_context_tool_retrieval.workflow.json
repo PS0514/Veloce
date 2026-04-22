@@ -1,0 +1,136 @@
+{
+  "name": "Veloce - Telegram Context Retrieval Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-context-retrieve",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "Webhook_Retrieve",
+      "name": "Webhook Retrieve",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nif (body.chat_id === undefined || body.chat_id === null || body.chat_id === '') {\n  throw new Error('chat_id is required');\n}\n\nconst chatId = Number(body.chat_id);\nif (!Number.isFinite(chatId)) {\n  throw new Error('chat_id must be numeric');\n}\n\nconst limitRaw = Number(body.limit ?? 8);\nconst limit = Math.max(1, Math.min(50, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 8));\nconst query = String(body.query ?? '').trim().toLowerCase();\nconst since = String(body.since ?? '').trim();\n\nconst whereParts = [`chat_id = ${chatId}`];\nif (since) {\n  whereParts.push(`date >= '${since.replace(/'/g, \"''\")}'`);\n}\n\nconst sql = `SELECT chat_id, message_id, sender_id, chat_title, message, source, date\nFROM telegram_context\nWHERE ${whereParts.join(' AND ')}\nORDER BY date DESC\nLIMIT ${Math.max(limit * 5, 20)};`;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    query,\n    limit,\n    since: since || null,\n    sql\n  }\n}];"
+      },
+      "id": "Code_BuildQuery",
+      "name": "Build SQL Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.sql}}"
+      },
+      "id": "SQLite_Select",
+      "name": "Select Candidates",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        730,
+        260
+      ],
+      "credentials": {
+        "sqlite": {
+          "id": "REPLACE_WITH_SQLITE_CREDENTIAL_ID",
+          "name": "SQLite"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Build SQL Query').item.json;\nconst query = String(prior.query || '').trim().toLowerCase();\nconst limit = Number(prior.limit || 8);\n\nconst nowMs = Date.now();\nconst queryTokens = query.split(/\\s+/).filter(Boolean);\n\nfunction recencyWeight(dateValue) {\n  if (!dateValue) return 0;\n  const ts = Date.parse(dateValue);\n  if (Number.isNaN(ts)) return 0;\n  const ageDays = Math.max(0, (nowMs - ts) / 86400000);\n  return 1 / (1 + ageDays / 7);\n}\n\nfunction textMatch(message) {\n  if (!queryTokens.length) return 0.5;\n  const msg = String(message || '').toLowerCase();\n  let hits = 0;\n  for (const token of queryTokens) {\n    if (msg.includes(token)) hits += 1;\n  }\n  return hits / queryTokens.length;\n}\n\nconst scored = items.map((item) => {\n  const row = item.json;\n  const tm = textMatch(row.message);\n  const rw = recencyWeight(row.date);\n  const score = Number((0.7 * tm + 0.3 * rw).toFixed(4));\n  return {\n    ...row,\n    score\n  };\n});\n\nconst filtered = queryTokens.length ? scored.filter((r) => r.score > 0.15) : scored;\nconst top = filtered\n  .sort((a, b) => b.score - a.score)\n  .slice(0, limit);\n\nreturn [{\n  json: {\n    chat_id: prior.chat_id,\n    query: prior.query,\n    returned: top.length,\n    items: top\n  }\n}];"
+      },
+      "id": "Code_Rank",
+      "name": "Rank And Trim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "Respond_Result",
+      "name": "Respond Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1220,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Retrieve": {
+      "main": [
+        [
+          {
+            "node": "Build SQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build SQL Query": {
+      "main": [
+        [
+          {
+            "node": "Select Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Candidates": {
+      "main": [
+        [
+          {
+            "node": "Rank And Trim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank And Trim": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "00000000-0000-0000-0000-000000000002",
+  "id": "veloce-telegram-context-retrieval"
+}

@@ -34,6 +34,14 @@ Veloce automates the entire workflow:
 
 ---
 
+# n8n Workflow Templates
+
+- Core workflow templates live in `n8n_workflows/`.
+- Telegram context tool workflows live in `glm/n8n_context_tool/`.
+- Main scheduling pipeline template: `n8n_workflows/03_core_task_scheduler.workflow.json`
+
+---
+
 # 🔁 System Flow
 
 Chrome Extension  
@@ -74,6 +82,8 @@ Chrome Extension
 	- **Keywords are optional**: leave keywords empty to process all messages from selected channels.
 4. Run listener manually:
 	- `python scripts/run_listener.py`
+	- Optional: set `LISTENER_STARTUP_HISTORY_LIMIT` in `.env` (default `3`) to send the last N messages per selected channel at listener startup.
+	- Set `LISTENER_STARTUP_HISTORY_LIMIT=0` to disable startup history.
 5. Or run with Docker compose:
 	- `docker compose -f deploy/docker-compose.yaml up -d`
 
