@@ -1,107 +1,84 @@
 # Veloce
 
-AI-powered workflow automation system that transforms unstructured messages into structured tasks and automatically schedules them into Google Calendar.
+Veloce is a Python-first AI orchestration system that turns unstructured messages into actionable tasks and schedules them into Google Calendar.
 
----
+## Problem
 
-# 🚀 Problem
+Important task and deadline info is scattered across Telegram, Gmail, and LMS feeds. Manual triage and calendar entry is slow and error-prone.
 
-Users receive important information across Gmail, Telegram, and Moodle, but:
-- Tasks are scattered
-- Deadlines are missed
-- Manual scheduling is inefficient
+## Solution
 
----
+Veloce now runs orchestration fully in Python:
 
-# 💡 Solution
+1. Receive inbound messages (listener or extension webhook).
+2. Use GLM as the reasoning engine to interpret and extract tasks.
+3. Decide among no-action, needs-context, needs-clarification, or schedule-now.
+4. Query Google Calendar availability.
+5. Check clashes and find earliest free slot before deadline.
+6. Create calendar event and return scheduling result.
 
-Veloce automates the entire workflow:
+## Current Architecture
 
-- Reads unstructured messages (email, chat, LMS)
-- Uses Z.AI GLM to understand intent
-- Extracts tasks, meetings, and deadlines
-- Automatically schedules into Google Calendar
-- Detects conflicts and suggests better time slots
+- AI: Z.AI GLM (OpenAI-compatible chat completions).
+- Orchestration API: FastAPI service in [src/veloce/orchestrator/app.py](src/veloce/orchestrator/app.py).
+- Listener: Telethon listener in [src/veloce/listener_service.py](src/veloce/listener_service.py).
+- Context store: SQLite + FTS5 in [src/veloce/orchestrator/db.py](src/veloce/orchestrator/db.py).
+- Scheduling: Calendar adapter and slot engine in [src/veloce/orchestrator/scheduling_engine.py](src/veloce/orchestrator/scheduling_engine.py).
 
----
+## API Endpoints
 
-# ⚙️ Tech Stack
+- POST `/veloce-task-scheduler`
+- POST `/telegram-context-ingest`
+- POST `/telegram-context-retrieve`
+- GET `/health`
 
-- 🧠 Z.AI GLM → AI reasoning engine
-- ⚙️ n8n → workflow orchestration backend
-- 🧩 Chrome Extension → data extraction + UI
-- 📅 Google Calendar API → scheduling system
+## Quickstart
 
----
+1. Create and activate a virtual environment.
+2. Install dependencies:
+   - `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and set required values.
+4. Run setup wizard (optional but recommended):
+   - `python scripts/run_setup.py`
+5. Run orchestrator API:
+   - `python scripts/run_orchestrator.py`
+6. Run Telegram listener:
+   - `python scripts/run_listener.py`
 
-# n8n Workflow Templates
+Compatibility launchers still work:
 
-- Core workflow templates live in `n8n_workflows/`.
-- Telegram context tool workflows live in `glm/n8n_context_tool/`.
-- Main scheduling pipeline template: `n8n_workflows/03_core_task_scheduler.workflow.json`
-
----
-
-# 🔁 System Flow
-
-Chrome Extension  
-→ n8n Webhook  
-→ Z.AI GLM (reasoning)  
-→ n8n workflow  
-→ Google Calendar  
-→ Chrome Extension UI
-
----
-
-# ✨ Key Features
-
-- Smart task extraction from messages
-- Auto calendar scheduling
-- Conflict detection
-- AI-driven decision making
-- Personal preference awareness 
-
----
-
-# Quickstart
-
-1. Install dependencies:
-	- `pip install -r requirements.txt`
-2. Run setup wizard:
-	- `python scripts/run_setup.py`
-3. In the setup page:
-	- Telegram API ID/API Hash auto-fill from `.env` if already present.
-	- If you do not have Telegram API credentials yet, create them at `https://my.telegram.org`:
-	  - Log in with your phone number.
-	  - Open **API development tools**.
-	  - Create an app (name + short name).
-	  - Copy **api_id** and **api_hash** into the wizard.
-	- Click **Save configuration** once with **Run Telegram login now** enabled to authorize `veloce_session`.
-	- Click **List my channels** to fetch your Telegram chats/channels.
-	- Use search + sort (**Latest message** or **Name**) to find channels quickly, then click **Use selected channels** to populate the filter field.
-	- **Keywords are optional**: leave keywords empty to process all messages from selected channels.
-4. Run listener manually:
-	- `python scripts/run_listener.py`
-	- Optional: set `LISTENER_STARTUP_HISTORY_LIMIT` in `.env` (default `3`) to send the last N messages per selected channel at listener startup.
-	- Set `LISTENER_STARTUP_HISTORY_LIMIT=0` to disable startup history.
-5. Or run with Docker compose:
-	- `docker compose -f deploy/docker-compose.yaml up -d`
-
-Compatibility shortcuts still available:
 - `python setup.py`
 - `python listener.py`
 
----
+## Required Environment Variables
 
+Core:
 
-# 🏆 Impact
+- `TELEGRAM_API_ID`
+- `TELEGRAM_API_HASH`
+- `VELOCE_ORCHESTRATOR_URL` (example: `http://127.0.0.1:8000/veloce-task-scheduler`)
+- `GENERIC_TIMEZONE` (example: `Asia/Kuala_Lumpur`)
 
-- Reduces manual effort in planning and scheduling by automating task creation from unstructured messages
-- Converts emails, chats, and LMS notifications into structured calendar events
-- Minimizes missed deadlines and important meetings through intelligent reminders
-- Improves time management by automatically organizing user schedules
-- Reduces cognitive load by eliminating the need to manually interpret and input tasks
-- Prevents scheduling conflicts through AI-driven conflict detection
-- Enhances productivity by streamlining communication-to-action workflow
+GLM:
 
----
+- `ZAI_API_KEY`
+- `ZAI_CHAT_COMPLETIONS_URL`
+- `ZAI_MODEL` (optional, default `glm-4.5`)
+
+Google Calendar scheduling:
+
+- `ENABLE_GOOGLE_SYNC=true`
+- `GOOGLE_CALENDAR_ID` (optional, default `primary`)
+- One auth mode:
+  - Access token mode: `GOOGLE_ACCESS_TOKEN`
+  - Refresh mode: `GOOGLE_REFRESH_TOKEN` + `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`
+
+Context DB:
+
+- `VELOCE_DB_PATH` (optional, default `data/veloce.db`)
+
+## Notes
+
+- If Google sync is disabled, scheduler returns a non-scheduled decision with reason.
+- If GLM cannot extract a valid actionable task, scheduler returns no-action.
+- n8n workflow JSON files are retained under [n8n_workflows/](n8n_workflows/) as legacy references during migration.

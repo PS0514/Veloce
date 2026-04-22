@@ -53,7 +53,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT OR IGNORE INTO telegram_context (chat_id, message_id, sender_id, chat_title, message, source, date)\nVALUES (\n  {{$json.chat_id}},\n  {{$json.message_id}},\n  {{$json.sender_id === null ? 'NULL' : $json.sender_id}},\n  {{$json.chat_title ? '\'' + $json.chat_title.replace(/\\'/g, \"''\") + '\'' : 'NULL'}},\n  '{{ $json.message.replace(/\\'/g, \"''\") }}',\n  '{{ $json.source.replace(/\\'/g, \"''\") }}',\n  {{$json.date ? '\'' + $json.date + '\'' : 'NULL'}}\n);\n\nCREATE INDEX IF NOT EXISTS idx_telegram_context_chat_date\nON telegram_context(chat_id, date DESC);"
+        "query": "=INSERT OR IGNORE INTO telegram_context (chat_id, message_id, sender_id, chat_title, message, source, date)\nVALUES (\n  {{$json.chat_id}},\n  {{$json.message_id}},\n  {{$json.sender_id === null ? 'NULL' : $json.sender_id}},\n  {{$json.chat_title ? \"'\" + $json.chat_title.replace(/'/g, \"''\") + \"'\" : 'NULL'}},\n  '{{ $json.message.replace(/'/g, \"''\") }}',\n  '{{ $json.source.replace(/'/g, \"''\") }}',\n  {{$json.date ? \"'\" + $json.date + \"'\" : 'NULL'}}\n);\n\nCREATE INDEX IF NOT EXISTS idx_telegram_context_chat_date\nON telegram_context(chat_id, date DESC);"
       },
       "id": "SQLite_Insert",
       "name": "Insert Context",

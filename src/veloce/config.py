@@ -12,6 +12,8 @@ class ListenerConfig:
     channel_usernames: Set[str]
     keywords: list[str]
     startup_history_limit: int
+    orchestrator_url: str | None
+    db_path: str | None
 
 
 def parse_channel_filters(raw_filters: str) -> tuple[Set[int], Set[str]]:
@@ -50,12 +52,17 @@ def load_listener_config() -> ListenerConfig:
     channel_chat_ids, channel_usernames = parse_channel_filters(channels_raw)
     startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "3"), 3)
 
+    orchestrator_url = os.getenv("VELOCE_ORCHESTRATOR_URL")
+    webhook_url = orchestrator_url or os.getenv("N8N_WEBHOOK_URL")
+
     return ListenerConfig(
         api_id=os.getenv("TELEGRAM_API_ID"),
         api_hash=os.getenv("TELEGRAM_API_HASH"),
-        webhook_url=os.getenv("N8N_WEBHOOK_URL"),
+        webhook_url=webhook_url,
         channel_chat_ids=channel_chat_ids,
         channel_usernames=channel_usernames,
         keywords=parse_keywords(keywords_raw),
         startup_history_limit=startup_history_limit,
+        orchestrator_url=orchestrator_url,
+        db_path=os.getenv("VELOCE_DB_PATH"),
     )

@@ -34,11 +34,14 @@ def read_env_file() -> dict[str, str]:
 
 def default_values() -> dict[str, str | bool]:
     env_map = read_env_file()
+    orchestrator_url = env_map.get("VELOCE_ORCHESTRATOR_URL", "http://127.0.0.1:8000/veloce-task-scheduler")
     return {
         "telegram_api_id": env_map.get("TELEGRAM_API_ID", ""),
         "telegram_api_hash": env_map.get("TELEGRAM_API_HASH", ""),
-        "n8n_webhook_url": env_map.get("N8N_WEBHOOK_URL", DEFAULT_WEBHOOK),
+        "n8n_webhook_url": env_map.get("N8N_WEBHOOK_URL", orchestrator_url),
         "generic_timezone": env_map.get("GENERIC_TIMEZONE", "Asia/Kuala_Lumpur"),
+        "veloce_orchestrator_url": orchestrator_url,
+        "veloce_db_path": env_map.get("VELOCE_DB_PATH", "data/veloce.db"),
         "google_client_id": env_map.get("GOOGLE_CLIENT_ID", ""),
         "google_client_secret": env_map.get("GOOGLE_CLIENT_SECRET", ""),
         "telegram_channels": env_map.get("TELEGRAM_CHANNEL_FILTERS", ""),
@@ -50,10 +53,13 @@ def default_values() -> dict[str, str | bool]:
 
 
 def save_env(values: dict[str, str | bool]) -> None:
+    target_url = str(values["n8n_webhook_url"]).strip()
     lines = [
         f"TELEGRAM_API_ID={values['telegram_api_id']}",
         f"TELEGRAM_API_HASH={values['telegram_api_hash']}",
-        f"N8N_WEBHOOK_URL={values['n8n_webhook_url']}",
+        f"N8N_WEBHOOK_URL={target_url}",
+        f"VELOCE_ORCHESTRATOR_URL={target_url}",
+        f"VELOCE_DB_PATH={values['veloce_db_path']}",
         f"GENERIC_TIMEZONE={values['generic_timezone']}",
         f"GOOGLE_CLIENT_ID={values['google_client_id']}",
         f"GOOGLE_CLIENT_SECRET={values['google_client_secret']}",
@@ -195,6 +201,7 @@ def index():
                 "telegram_api_hash": request.form.get("telegram_api_hash", "").strip(),
                 "n8n_webhook_url": request.form.get("n8n_webhook_url", DEFAULT_WEBHOOK).strip() or DEFAULT_WEBHOOK,
                 "generic_timezone": request.form.get("generic_timezone", "Asia/Kuala_Lumpur").strip() or "Asia/Kuala_Lumpur",
+                "veloce_db_path": request.form.get("veloce_db_path", "data/veloce.db").strip() or "data/veloce.db",
                 "google_client_id": request.form.get("google_client_id", "").strip(),
                 "google_client_secret": request.form.get("google_client_secret", "").strip(),
                 "telegram_channels": request.form.get("telegram_channels", "").strip(),
