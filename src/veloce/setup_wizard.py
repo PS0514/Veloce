@@ -122,18 +122,18 @@ def google_oauth_start():
     return redirect(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
 
 
-@APP.route("/google/oauth/callback")
+@APP.route("/google/oauth/callback", methods=["GET", "POST"])
 def google_oauth_callback():
     expected_state = session.get("google_oauth_state")
-    received_state = request.args.get("state", "")
+    received_state = request.values.get("state", "")
     if not expected_state or received_state != expected_state:
         abort(400, description="Invalid Google OAuth state")
 
-    error = request.args.get("error")
+    error = request.values.get("error")
     if error:
         return _render(error=f"Google login failed: {error}")
 
-    code = request.args.get("code", "").strip()
+    code = request.values.get("code", "").strip()
     if not code:
         abort(400, description="Missing Google OAuth code")
 
