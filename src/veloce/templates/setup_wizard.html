@@ -165,6 +165,20 @@
         padding: 10px 12px;
         border-radius: 8px;
       }
+      .guide {
+        margin-top: 10px;
+        border: 1px solid #d9e2ee;
+        border-radius: 10px;
+        padding: 12px;
+        background: #fbfdff;
+      }
+      .guide ol {
+        margin: 8px 0 0 18px;
+        color: var(--muted);
+      }
+      .guide li {
+        margin: 6px 0;
+      }
       .channels {
         margin-top: 8px;
         border: 1px solid #d9e2ee;
@@ -216,6 +230,33 @@
         border-radius: 10px;
         padding: 12px;
         background: #fafcff;
+      }
+      .calendar-list {
+        margin-top: 8px;
+        border: 1px solid #d9e2ee;
+        border-radius: 10px;
+        padding: 12px;
+        background: #fafcff;
+      }
+      .calendar-item {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin-bottom: 8px;
+        font-weight: 500;
+      }
+      .calendar-item input[type="radio"] {
+        width: 16px;
+        min-width: 16px;
+        height: 16px;
+        margin: 2px 0 0;
+        padding: 0;
+        flex: 0 0 auto;
+      }
+      .calendar-item span {
+        display: inline-block;
+        line-height: 1.35;
+        word-break: break-word;
       }
       .service-row {
         display: flex;
@@ -274,6 +315,13 @@
 
         const merged = Array.from(new Set(existing.concat(selected)));
         target.value = merged.join(',');
+      }
+
+      function applySelectedCalendar() {
+        const selected = document.querySelector('input[name="selected_google_calendar"]:checked');
+        const target = document.querySelector('input[name="google_calendar_id"]');
+        if (!selected || !target) return;
+        target.value = selected.value;
       }
 
       function filterAndSortChannels() {
@@ -341,7 +389,7 @@
         <div class="section">
           <div class="section-head">
             <h2 class="section-title">Telegram</h2>
-            <p class="section-sub">Credentials and Telegram session controls.</p>
+            <p class="section-sub">Credentials and browser-based Telegram session controls.</p>
           </div>
           <div class="grid">
             <div>
@@ -353,10 +401,42 @@
               <input name="telegram_api_hash" required value="{{ values.telegram_api_hash }}" />
             </div>
           </div>
-          <label class="toggle"><input type="checkbox" name="telegram_auth" {% if values.telegram_auth %}checked{% endif %} /> Run Telegram login now</label>
-          <div class="actions" style="margin-top: 12px;">
-            <button type="submit" name="action" value="list_channels">List my channels</button>
+
+          <div class="guide" style="margin-top: 10px;">
+            <strong class="panel-title">Web login</strong>
+            <ol>
+              <li>Enter your phone number in international format (example: <code>+60123456789</code>).</li>
+              <li>Click <strong>Start Telegram login</strong> to receive a Telegram code.</li>
+              <li>Enter the code and click <strong>Verify Telegram code</strong>.</li>
+              <li>If prompted, enter your Telegram 2FA password and verify again.</li>
+            </ol>
           </div>
+
+          <div class="grid" style="margin-top: 10px;">
+            <div>
+              <label>Telegram Phone</label>
+              <input name="telegram_phone" placeholder="+60123456789" value="{{ values.telegram_phone }}" />
+            </div>
+            <div>
+              <label>Telegram Verification Code</label>
+              <input name="telegram_code" placeholder="12345" value="{{ values.telegram_code }}" />
+            </div>
+            {% if telegram_login_state and telegram_login_state.get('awaiting') == 'password' %}
+              <div>
+                <label>Telegram 2FA Password</label>
+                <input type="password" name="telegram_password" placeholder="Your Telegram 2FA password" value="{{ values.telegram_password }}" />
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="actions" style="margin-top: 12px;">
+            <button type="submit" name="action" value="telegram_login" style="background: linear-gradient(120deg, #ef476f, #ffd166); color: #fff;">Start Telegram login</button>
+            <button type="submit" name="action" value="telegram_verify_code" style="margin-left: 8px; background: #2a9d8f;">Verify Telegram code</button>
+            <button type="submit" name="action" value="telegram_cancel_login" style="margin-left: 8px; background: #9b2226;">Cancel login</button>
+            <button type="submit" name="action" value="list_channels" style="margin-left: 8px;">List my channels</button>
+          </div>
+
+          <div class="info" style="margin-top: 12px;">{{ telegram_info }}</div>
         </div>
 
         <div class="section">
@@ -409,11 +489,11 @@
         <div class="section">
           <div class="section-head">
             <h2 class="section-title">Integrations</h2>
-            <p class="section-sub">Webhook, timezone, and optional Google synchronization settings.</p>
+            <p class="section-sub">Core service URLs and runtime settings.</p>
           </div>
           <div class="grid">
             <div>
-              <label>n8n Webhook URL</label>
+              <label>Orchestrator Webhook URL</label>
               <input name="n8n_webhook_url" value="{{ values.n8n_webhook_url }}" />
             </div>
             <div>
@@ -421,15 +501,87 @@
               <input name="generic_timezone" value="{{ values.generic_timezone }}" />
             </div>
             <div>
-              <label>Google Client ID (optional)</label>
-              <input name="google_client_id" value="{{ values.google_client_id }}" />
+              <label>Veloce Orchestrator URL</label>
+              <input name="veloce_orchestrator_url" value="{{ values.veloce_orchestrator_url }}" disabled />
             </div>
             <div>
-              <label>Google Client Secret (optional)</label>
-              <input name="google_client_secret" value="{{ values.google_client_secret }}" />
+              <label>SQLite DB Path</label>
+              <input name="veloce_db_path" value="{{ values.veloce_db_path }}" />
             </div>
           </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <h2 class="section-title">Google Calendar</h2>
+            <p class="section-sub">Sign in, list calendars, and choose the target calendar for scheduling.</p>
+          </div>
           <label class="toggle"><input type="checkbox" name="enable_google_sync" {% if values.enable_google_sync %}checked{% endif %} /> Enable Google integration</label>
+
+          <div class="guide">
+            <strong class="panel-title">Browser login</strong>
+            <ol>
+              <li>Set up a Google OAuth client in Google Cloud Console if you have not already.</li>
+              <li>Add this redirect URI to the client: <code>http://127.0.0.1:8765/google/oauth/callback</code></li>
+              <li>Enter the Client ID and Client Secret below.</li>
+              <li>Click <strong>Sign in with Google</strong> to open the browser consent screen.</li>
+              <li>After sign-in, click <strong>List my Google calendars</strong> and choose one.</li>
+            </ol>
+          </div>
+
+          <div class="grid" style="margin-top: 10px;">
+            <div>
+              <label>Google Client ID</label>
+              <input name="google_client_id" value="{{ values.google_client_id }}" placeholder="OAuth client ID" />
+            </div>
+            <div>
+              <label>Google Client Secret</label>
+              <input name="google_client_secret" value="{{ values.google_client_secret }}" placeholder="OAuth client secret" />
+            </div>
+            <div>
+              <label>Google Access Token</label>
+              <input name="google_access_token" value="{{ values.google_access_token }}" placeholder="Optional if you already have an access token" />
+            </div>
+            <div>
+              <label>Google Refresh Token</label>
+              <input name="google_refresh_token" value="{{ values.google_refresh_token }}" placeholder="Optional if you want token refresh" />
+            </div>
+            <div>
+              <label>Google Calendar ID</label>
+              <input name="google_calendar_id" value="{{ values.google_calendar_id }}" placeholder="primary" readonly />
+            </div>
+          </div>
+
+          <div class="actions" style="margin-top: 12px;">
+            <a href="{{ url_for('google_oauth_start') }}" style="display: inline-block; text-decoration: none; border: 0; border-radius: 12px; background: linear-gradient(120deg, #06d6a0, #118ab2); color: #fff; font-weight: 700; letter-spacing: 0.2px; padding: 11px 16px; box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);">Sign in with Google</a>
+            <button type="submit" name="action" value="list_google_calendars" style="margin-left: 8px;">List my Google calendars</button>
+          </div>
+
+          {% if google_info %}
+            <div class="info" style="margin-top: 12px;">{{ google_info }}</div>
+          {% endif %}
+
+          <div class="calendar-list">
+            <strong class="panel-title">Available Google calendars</strong>
+            {% if google_calendars and google_calendars|length > 0 %}
+              <p class="muted">Choose one calendar as the scheduling target, then click “Use selected calendar”.</p>
+              {% for cal in google_calendars %}
+                <label class="calendar-item">
+                  <input type="radio" name="selected_google_calendar" value="{{ cal.id }}" {% if cal.id == values.google_calendar_id %}checked{% endif %} />
+                  <span>
+                    {{ cal.label }}
+                    <small class="muted channel-meta">Calendar ID: {{ cal.id }}</small>
+                  </span>
+                </label>
+              {% endfor %}
+            {% else %}
+              <p class="muted">No Google calendars loaded yet. Add Google credentials and click “List my Google calendars”.</p>
+            {% endif %}
+
+            <div class="actions" style="margin-top: 10px;">
+              <button type="button" onclick="applySelectedCalendar()" style="background: #1b4965;">Use selected calendar</button>
+            </div>
+          </div>
         </div>
 
         <div class="section">
@@ -470,7 +622,7 @@
       </form>
 
       <div class="note">
-        If Telegram login is enabled, continue in this terminal to enter your phone number and verification code.
+        Telegram login is fully handled on this page. You no longer need terminal prompts for phone/code input.
       </div>
     </div>
   </body>

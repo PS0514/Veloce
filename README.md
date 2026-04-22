@@ -44,6 +44,8 @@ Veloce now runs orchestration fully in Python:
    - `python scripts/run_orchestrator.py`
 6. Run Telegram listener:
    - `python scripts/run_listener.py`
+7. Or run both with Docker:
+   - `docker compose -f deploy/docker-compose.yaml up -d`
 
 Compatibility launchers still work:
 
@@ -58,6 +60,7 @@ Core:
 - `TELEGRAM_API_HASH`
 - `VELOCE_ORCHESTRATOR_URL` (example: `http://127.0.0.1:8000/veloce-task-scheduler`)
 - `GENERIC_TIMEZONE` (example: `Asia/Kuala_Lumpur`)
+- `GOOGLE_CALENDAR_ID` (calendar selected in the wizard)
 
 GLM:
 
@@ -73,6 +76,30 @@ Google Calendar scheduling:
   - Access token mode: `GOOGLE_ACCESS_TOKEN`
   - Refresh mode: `GOOGLE_REFRESH_TOKEN` + `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`
 
+## Browser Google Login
+
+The setup wizard now supports a browser-based OAuth flow for Google.
+
+1. Open the setup wizard.
+2. In the Google Calendar section, enter your Google Client ID and Client Secret.
+3. Add this redirect URI in Google Cloud Console: `http://127.0.0.1:8765/google/oauth/callback`
+4. Click `Sign in with Google` in the wizard.
+5. Finish consent in the browser.
+6. Return to the wizard, click `List my Google calendars`, and choose the target calendar.
+7. Save the configuration.
+
+## Google Calendar Setup Guide
+
+1. Open [Google Calendar](https://calendar.google.com) and sign in.
+2. In the left sidebar, click the `+` next to `Other calendars`.
+3. Choose `Create new calendar`.
+4. Give the calendar a clear name, such as `Veloce` or `Study Planner`.
+5. Click `Create calendar` and confirm it appears in your calendar list.
+6. Return to the setup wizard, click `List my Google calendars`, and select the calendar you want Veloce to use.
+7. Save the configuration so `GOOGLE_CALENDAR_ID` is written to `.env`.
+
+If you want Veloce to schedule into your main calendar, leave `GOOGLE_CALENDAR_ID=primary`.
+
 Context DB:
 
 - `VELOCE_DB_PATH` (optional, default `data/veloce.db`)
@@ -81,4 +108,5 @@ Context DB:
 
 - If Google sync is disabled, scheduler returns a non-scheduled decision with reason.
 - If GLM cannot extract a valid actionable task, scheduler returns no-action.
+- Docker compose now starts the Python orchestrator service plus the Telegram listener.
 - n8n workflow JSON files are retained under [n8n_workflows/](n8n_workflows/) as legacy references during migration.

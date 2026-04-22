@@ -1,17 +1,16 @@
 services:
-  n8n:
-    image: docker.n8n.io/n8nio/n8n
-    container_name: n8n_core
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/orchestrator.Dockerfile
+    container_name: veloce_orchestrator
     restart: unless-stopped
     ports:
-      - "5678:5678"
-    environment:
-      - N8N_COMMUNITY_PACKAGES_ENABLED=true
-      - N8N_REINSTALL_MISSING_PACKAGES=true
+      - "8000:8000"
     env_file:
       - ../.env
     volumes:
-      - ../n8n_data:/home/node/.n8n
+      - ..:/app
 
   telegram_listener:
     build:
@@ -20,7 +19,7 @@ services:
     container_name: veloce_listener
     restart: unless-stopped
     depends_on:
-      - n8n
+      - orchestrator
     env_file:
       - ../.env
     volumes:

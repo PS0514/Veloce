@@ -14,6 +14,7 @@ class ListenerConfig:
     startup_history_limit: int
     orchestrator_url: str | None
     db_path: str | None
+    session_path: str
 
 
 def parse_channel_filters(raw_filters: str) -> tuple[Set[int], Set[str]]:
@@ -54,6 +55,12 @@ def load_listener_config() -> ListenerConfig:
 
     orchestrator_url = os.getenv("VELOCE_ORCHESTRATOR_URL")
     webhook_url = orchestrator_url or os.getenv("N8N_WEBHOOK_URL")
+    
+    # Use data directory for session storage
+    db_path = os.getenv("VELOCE_DB_PATH", "data/veloce.db")
+    data_dir = os.path.dirname(db_path) or "data"
+    os.makedirs(data_dir, exist_ok=True)
+    session_path = os.path.join(data_dir, "telegram_session")
 
     return ListenerConfig(
         api_id=os.getenv("TELEGRAM_API_ID"),
@@ -64,5 +71,6 @@ def load_listener_config() -> ListenerConfig:
         keywords=parse_keywords(keywords_raw),
         startup_history_limit=startup_history_limit,
         orchestrator_url=orchestrator_url,
-        db_path=os.getenv("VELOCE_DB_PATH"),
+        db_path=db_path,
+        session_path=session_path,
     )

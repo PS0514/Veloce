@@ -1,4 +1,6 @@
+import os
 import requests
+from pathlib import Path
 from telethon import TelegramClient, events
 
 from veloce.config import load_listener_config
@@ -6,11 +8,21 @@ from veloce.config import load_listener_config
 
 def build_client() -> TelegramClient:
     config = load_listener_config()
-    return TelegramClient("veloce_session", config.api_id, config.api_hash)
+    return TelegramClient(config.session_path, config.api_id, config.api_hash)
 
 
 def run_listener() -> None:
     config = load_listener_config()
+    
+    # Check if session is already authenticated before trying to start
+    session_file = Path(f"{config.session_path}.session")
+    if not session_file.exists():
+        raise RuntimeError(
+            f"Telegram session not found at {session_file}. "
+            "Please authenticate first by running the setup wizard (python scripts/run_setup.py) "
+            "and completing Telegram phone/2FA authentication."
+        )
+    
     client = build_client()
 
     def should_forward_text(raw_text: str) -> bool:

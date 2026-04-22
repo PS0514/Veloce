@@ -9,6 +9,7 @@ __pycache__/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+data/*
 
 # Allow tracking of exported workflows
 !workflows/
