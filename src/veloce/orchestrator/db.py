@@ -123,23 +123,23 @@ class SQLiteStore:
         fetch_limit = max(limit * 5, 20)
 
         with self._connect() as conn:
-            params: list[object] = [chat_id]
+            base_params: list[object] = [chat_id]
             where = ["tc.chat_id = ?"]
             if since:
                 where.append("tc.date >= ?")
-                params.append(since)
+                base_params.append(since)
 
             if query:
                 sql = f"""
                     SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
                     FROM telegram_context_fts f
                     JOIN telegram_context tc ON tc.id = f.rowid
-                    WHERE {' AND '.join(where)} AND f MATCH ?
+                    WHERE {' AND '.join(where)} AND telegram_context_fts MATCH ?
                     ORDER BY tc.date DESC
                     LIMIT ?
                 """
-                params.extend([query, fetch_limit])
-                rows = conn.execute(sql, params).fetchall()
+                fts_params = [*base_params, query, fetch_limit]
+                rows = conn.execute(sql, fts_params).fetchall()
                 if rows:
                     return rows
 
@@ -150,5 +150,5 @@ class SQLiteStore:
                 ORDER BY tc.date DESC
                 LIMIT ?
             """
-            params.append(fetch_limit)
-            return conn.execute(sql, params).fetchall()
+            fallback_params = [*base_params, fetch_limit]
+            return conn.execute(sql, fallback_params).fetchall()

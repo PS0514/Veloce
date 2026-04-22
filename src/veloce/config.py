@@ -51,7 +51,7 @@ def load_listener_config() -> ListenerConfig:
     channels_raw = os.getenv("TELEGRAM_CHANNEL_FILTERS", "")
     keywords_raw = os.getenv("LISTENER_KEYWORDS", "")
     channel_chat_ids, channel_usernames = parse_channel_filters(channels_raw)
-    startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "3"), 3)
+    startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "10"), 10)
 
     orchestrator_url = os.getenv("VELOCE_ORCHESTRATOR_URL")
     webhook_url = orchestrator_url or os.getenv("N8N_WEBHOOK_URL")

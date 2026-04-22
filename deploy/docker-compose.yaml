@@ -17,10 +17,13 @@ services:
       context: ..
       dockerfile: deploy/listener.Dockerfile
     container_name: veloce_listener
-    restart: unless-stopped
+    restart: on-failure:5
     depends_on:
       - orchestrator
     env_file:
       - ../.env
+    environment:
+      VELOCE_ORCHESTRATOR_URL: http://orchestrator:8000/veloce-task-scheduler
+      N8N_WEBHOOK_URL: http://orchestrator:8000/veloce-task-scheduler
     volumes:
       - ..:/app

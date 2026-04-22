@@ -1,7 +1,8 @@
-import os
 import requests
+import sqlite3
 from pathlib import Path
-from telethon import TelegramClient, events
+from telethon import events
+from telethon.sync import TelegramClient
 
 from veloce.config import load_listener_config
 
@@ -13,6 +14,11 @@ def build_client() -> TelegramClient:
 
 def run_listener() -> None:
     config = load_listener_config()
+
+    if not config.api_id or not config.api_hash:
+        raise RuntimeError(
+            "TELEGRAM_API_ID and TELEGRAM_API_HASH must be configured before starting the listener."
+        )
     
     # Check if session is already authenticated before trying to start
     session_file = Path(f"{config.session_path}.session")
@@ -94,6 +100,9 @@ def run_listener() -> None:
                     "message": message.message,
                     "date": message.date.isoformat() if message.date else None,
                 }
+
+                [print(f"Startup history - posting message {message.id} with text '{message.message[:50]}...' from chat {dialog.name}...")]
+
                 post_to_webhook(payload)
 
     @client.on(events.NewMessage(incoming=True))
@@ -114,9 +123,24 @@ def run_listener() -> None:
             post_to_webhook(payload)
 
     print("Veloce Listener is actively monitoring Telegram...")
-    client.start()
-    client.loop.run_until_complete(send_startup_history())
-    client.run_until_disconnected()
+    try:
+        client.connect()
+    except sqlite3.OperationalError as exc:
+        raise RuntimeError(
+            f"Failed to open Telegram session database at {session_file}: {exc}. "
+            "If this persists, stop all listener/setup processes and delete the session file so you can log in again."
+        ) from exc
+
+    try:
+        if not client.is_user_authorized():
+            raise RuntimeError(
+                "Telegram session exists but is not authorized. Complete login in setup wizard first."
+            )
+
+        client.loop.run_until_complete(send_startup_history())
+        client.run_until_disconnected()
+    finally:
+        client.disconnect()
 
 
 if __name__ == "__main__":
