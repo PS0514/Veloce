@@ -7,7 +7,7 @@ from secrets import token_urlsafe
 from urllib.parse import urlencode
 
 import requests
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from telethon.sync import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
@@ -359,14 +359,20 @@ def is_telegram_authenticated() -> bool:
     return session_file.exists()
 
 
-def get_telegram_user_info() -> tuple[bool, str]:
+def get_telegram_user_info(api_id: str | None = None, api_hash: str | None = None) -> tuple[bool, str]:
     """Get authenticated Telegram user info if available."""
     if not is_telegram_authenticated():
         return False, "Not logged in"
     
     try:
         config = load_listener_config()
-        client = TelegramClient(config.session_path, config.api_id, config.api_hash)
+        env_map = read_env_file()
+        effective_api_id = (api_id or config.api_id or env_map.get("TELEGRAM_API_ID", "")).strip()
+        effective_api_hash = (api_hash or config.api_hash or env_map.get("TELEGRAM_API_HASH", "")).strip()
+        if not effective_api_id or not effective_api_hash:
+            return False, "Missing Telegram API credentials"
+
+        client = TelegramClient(config.session_path, effective_api_id, effective_api_hash)
         client.connect()
         try:
             if not client.is_user_authorized():
@@ -460,6 +466,43 @@ def try_auto_load_google_calendars(values: dict[str, str | bool]) -> tuple[list[
         return [], f"Google calendar lookup skipped or failed: {exc}"
 
 
+def get_google_connection_status(values: dict[str, str | bool]) -> tuple[bool, str]:
+    if not bool(values.get("enable_google_sync")):
+        return False, "Google sync is disabled in setup."
+
+    try:
+        calendars = list_google_calendars(values)
+        count = len(calendars)
+        if count > 0:
+            return True, f"Connected ({count} calendar(s) available)."
+        return True, "Connected."
+    except Exception as exc:
+        return False, f"Not connected: {exc}"
+
+
+@APP.route("/auth/status", methods=["GET"])
+def auth_status():
+    values = default_values()
+    google_connected, google_status = get_google_connection_status(values)
+    telegram_connected, telegram_user = get_telegram_user_info(
+        str(values.get("telegram_api_id", "")).strip(),
+        str(values.get("telegram_api_hash", "")).strip(),
+    )
+    telegram_status = (
+        f"Connected as {telegram_user}." if telegram_connected else f"Not connected: {telegram_user}"
+    )
+
+    return jsonify(
+        {
+            "google_connected": google_connected,
+            "telegram_connected": telegram_connected,
+            "account_ready": google_connected and telegram_connected,
+            "google_status": google_status,
+            "telegram_status": telegram_status,
+        }
+    )
+
+
 def compose_base_command() -> list[str]:
     deploy_compose = ROOT / "deploy" / "docker-compose.yaml"
     if deploy_compose.exists():
@@ -536,7 +579,10 @@ def index():
     telegram_login_state = get_telegram_login_state()
 
     # Check Telegram auth status
-    is_telegram_authed, telegram_user = get_telegram_user_info()
+    is_telegram_authed, telegram_user = get_telegram_user_info(
+        str(values.get("telegram_api_id", "")).strip(),
+        str(values.get("telegram_api_hash", "")).strip(),
+    )
     if is_telegram_authed:
         telegram_info = f"✓ Logged in as {telegram_user}"
     
@@ -642,7 +688,10 @@ def index():
         telegram_login_state = get_telegram_login_state()
         
         # Re-check Telegram status after login
-        is_telegram_authed, telegram_user = get_telegram_user_info()
+        is_telegram_authed, telegram_user = get_telegram_user_info(
+            str(values.get("telegram_api_id", "")).strip(),
+            str(values.get("telegram_api_hash", "")).strip(),
+        )
         if is_telegram_authed:
             telegram_info = f"✓ Logged in as {telegram_user}"
         else:

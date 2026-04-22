@@ -8,7 +8,32 @@
   </head>
   <body>
     <div class="wrap">
-      <div class="tabs">
+      <div class="setup-gate" id="setupGate" style="display: none;">
+        <div class="card">
+          <h1>Setup Required</h1>
+          <p>Connect both Google and Telegram in your account portal before using extraction.</p>
+
+          <div class="status-grid">
+            <div class="status-item">
+              <span class="label">Google</span>
+              <span class="status-chip status-chip-off" id="googleStatusChip">Not Connected</span>
+            </div>
+            <div class="status-item">
+              <span class="label">Telegram</span>
+              <span class="status-chip status-chip-off" id="telegramStatusChip">Not Connected</span>
+            </div>
+          </div>
+
+          <div class="small" id="setupGateMessage">Check your account status to continue.</div>
+
+          <div class="settings-grid" style="margin-top: 10px;">
+            <button class="save-btn" id="gateConnectAccountBtn" type="button">Connect Account</button>
+            <button class="secondary-btn" id="refreshStatusBtn" type="button">Refresh Status</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs" id="tabsContainer">
         <button class="tab-btn active" id="resultTabBtn" type="button">Result</button>
         <button class="tab-btn" id="settingsTabBtn" type="button">Settings</button>
       </div>
@@ -69,37 +94,25 @@
       <div class="panel" id="settingsPanel">
         <div class="card">
           <h1>Settings</h1>
-          <p>Control scraping behavior and backend endpoint.</p>
+          <p>Control extraction mode and server-linked preferences.</p>
           <div class="settings-grid">
-            <label class="switch" for="autoDetectToggle">
-              <span>Auto-Detect Mode</span>
-              <input id="autoDetectToggle" type="checkbox" />
-            </label>
-
-            <label class="switch" for="autoReadToggle">
-              <span>Auto-Read Permissions</span>
-              <input id="autoReadToggle" type="checkbox" />
-            </label>
-
             <label class="switch" for="manualModeToggle">
-              <span>Manual Trigger Mode</span>
-              <input id="manualModeToggle" type="checkbox" />
-            </label>
-
-            <label class="field" for="userIdInput">
-              <span class="label">User ID</span>
-              <input id="userIdInput" type="text" placeholder="anonymous" />
-            </label>
-
-            <label class="field" for="webhookUrlInput">
-              <span class="label">n8n Webhook URL</span>
-              <input id="webhookUrlInput" type="url" placeholder="https://..." />
+              <span>
+                <strong>Manual Trigger Mode</strong>
+                <small class="switch-help">ON: highlight text then Add to Calendar only. OFF: automatic extraction is allowed.</small>
+              </span>
+              <span class="switch-control">
+                <input id="manualModeToggle" type="checkbox" />
+                <span class="switch-slider" aria-hidden="true"></span>
+              </span>
             </label>
 
             <label class="field" for="promptInput">
               <span class="label">AI Prompt / Instructions</span>
               <textarea id="promptInput" placeholder="Example: Extract only actionable tasks, preserve deadlines, and summarize the request clearly."></textarea>
             </label>
+
+            <button class="secondary-btn" id="connectAccountBtn" type="button">Connect Account</button>
 
             <button class="secondary-btn" id="resetSettingsBtn" type="button">Reset to Default</button>
 
