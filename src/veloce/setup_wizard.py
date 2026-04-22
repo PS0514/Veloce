@@ -374,9 +374,8 @@ def get_telegram_user_info(api_id: str | None = None, api_hash: str | None = Non
     
     try:
         config = load_listener_config()
-        env_map = read_env_file()
-        effective_api_id = (api_id or config.api_id or env_map.get("TELEGRAM_API_ID", "")).strip()
-        effective_api_hash = (api_hash or config.api_hash or env_map.get("TELEGRAM_API_HASH", "")).strip()
+        effective_api_id = (api_id or config.api_id or _env("TELEGRAM_API_ID")).strip()
+        effective_api_hash = (api_hash or config.api_hash or _env("TELEGRAM_API_HASH")).strip()
         if not effective_api_id or not effective_api_hash:
             return False, "Missing Telegram API credentials"
 
@@ -484,7 +483,7 @@ def get_google_connection_status(values: dict[str, str | bool]) -> tuple[bool, s
         return False, "Google sync is disabled in setup."
 
     try:
-        calendars = list_google_calendars(values)
+        calendars = list_google_calendars()
         count = len(calendars)
         if count > 0:
             return True, f"Connected ({count} calendar(s) available)."
@@ -495,7 +494,7 @@ def get_google_connection_status(values: dict[str, str | bool]) -> tuple[bool, s
 
 @APP.route("/auth/status", methods=["GET"])
 def auth_status():
-    values = default_values()
+    values = current_values()
     google_connected, google_status = get_google_connection_status(values)
     telegram_connected, telegram_user = get_telegram_user_info(
         str(values.get("telegram_api_id", "")).strip(),
