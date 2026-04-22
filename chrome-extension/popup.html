@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Veloce</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="tabs">
+        <button class="tab-btn active" id="resultTabBtn" type="button">Result</button>
+        <button class="tab-btn" id="settingsTabBtn" type="button">Settings</button>
+      </div>
+
+      <div class="panel active" id="resultPanel">
+        <div class="card">
+          <h1>AI Output</h1>
+          <p>Mapped from the strict schema returned by your backend.</p>
+          <div class="status-pill" id="statusPill">Idle</div>
+
+          <div class="loading" id="loadingState">
+            <span class="spinner"></span>
+            <span>Processing with GLM...</span>
+          </div>
+
+          <div class="success" id="successState"></div>
+          <div class="error" id="errorState"></div>
+
+          <div class="schema">
+            <div class="row">
+              <span class="label">Title</span>
+              <span class="value" id="fieldTitle">-</span>
+            </div>
+            <div class="row">
+              <span class="label">Date</span>
+              <span class="value" id="fieldDate">-</span>
+            </div>
+            <div class="row">
+              <span class="label">Time</span>
+              <span class="value" id="fieldTime">-</span>
+            </div>
+            <div class="row">
+              <span class="label">Confidence</span>
+              <span class="confidence-badge confidence-mid" id="fieldConfidence">-</span>
+              <div class="warning" id="clarificationWarning">Needs Clarification</div>
+            </div>
+            <div class="row">
+              <span class="label">Message</span>
+              <span class="value" id="fieldMessage">-</span>
+            </div>
+          </div>
+
+          <div class="small" id="lastPayload">No payload captured yet.</div>
+
+          <div class="schema extra-schema">
+            <div class="row">
+              <span class="label">Extracted Tasks</span>
+              <pre class="json-box" id="taskList">No extracted tasks yet.</pre>
+            </div>
+            <div class="row">
+              <span class="label">GLM Output JSON</span>
+              <pre class="json-box" id="glmJson">No GLM response yet.</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="settingsPanel">
+        <div class="card">
+          <h1>Settings</h1>
+          <p>Control scraping behavior and backend endpoint.</p>
+          <div class="settings-grid">
+            <label class="switch" for="autoDetectToggle">
+              <span>Auto-Detect Mode</span>
+              <input id="autoDetectToggle" type="checkbox" />
+            </label>
+
+            <label class="switch" for="autoReadToggle">
+              <span>Auto-Read Permissions</span>
+              <input id="autoReadToggle" type="checkbox" />
+            </label>
+
+            <label class="switch" for="manualModeToggle">
+              <span>Manual Trigger Mode</span>
+              <input id="manualModeToggle" type="checkbox" />
+            </label>
+
+            <label class="field" for="userIdInput">
+              <span class="label">User ID</span>
+              <input id="userIdInput" type="text" placeholder="anonymous" />
+            </label>
+
+            <label class="field" for="webhookUrlInput">
+              <span class="label">n8n Webhook URL</span>
+              <input id="webhookUrlInput" type="url" placeholder="https://..." />
+            </label>
+
+            <label class="field" for="promptInput">
+              <span class="label">AI Prompt / Instructions</span>
+              <textarea id="promptInput" placeholder="Example: Extract only actionable tasks, preserve deadlines, and summarize the request clearly."></textarea>
+            </label>
+
+            <button class="secondary-btn" id="resetSettingsBtn" type="button">Reset to Default</button>
+
+            <button class="save-btn" id="saveSettingsBtn" type="button">Save Settings</button>
+            <div class="small" id="saveStatus">Changes are persisted in local storage.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

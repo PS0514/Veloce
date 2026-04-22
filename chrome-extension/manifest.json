@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Veloce Extractor",
+  "description": "Extracts actionable text from Gmail, Telegram Web, and Moodle.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Veloce",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "Veloce_Logo.png",
+      "32": "Veloce_Logo.png",
+      "48": "Veloce_Logo.png",
+      "128": "Veloce_Logo.png"
+    }
+  },
+  "icons": {
+    "16": "Veloce_Logo.png",
+    "32": "Veloce_Logo.png",
+    "48": "Veloce_Logo.png",
+    "128": "Veloce_Logo.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus", "notifications"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://web.telegram.org/*",
+    "https://spectrum.um.edu.my/*",
+    "https://*.moodlecloud.com/*",
+    "https://moodle.your-university.edu/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*",
+        "https://web.telegram.org/*",
+        "https://spectrum.um.edu.my/*",
+        "https://*.moodlecloud.com/*",
+        "https://moodle.your-university.edu/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
