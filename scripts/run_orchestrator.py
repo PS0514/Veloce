@@ -16,4 +16,4 @@ logger = get_logger(__name__)
 
 if __name__ == "__main__":
     log_info(logger, "orchestrator_bootstrap_start", host="0.0.0.0", port=8000)
-    uvicorn.run("veloce.orchestrator.app:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("veloce.orchestrator.app:app", host="0.0.0.0", port=8000, reload=False, log_config=None)

@@ -35,10 +35,6 @@ def _create_app() -> FastAPI:
     app.include_router(router)
     return app
 
-
-app = _create_app()
-
-
 @router.get("/health")
 def health() -> dict[str, str]:
     return {
@@ -194,3 +190,6 @@ def veloce_task_scheduler(payload: SchedulerInbound) -> SchedulerResponse:
         clarification_question=result.clarification_question,
     )
     return result
+
+
+app = _create_app()

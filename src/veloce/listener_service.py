@@ -82,6 +82,22 @@ def run_listener() -> None:
                 error=exc,
             )
 
+    def post_to_context_ingest(payload: dict) -> None:
+        if not config.webhook_url:
+            return
+        ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
+        try:
+            requests.post(ingest_url, json=payload, timeout=10)
+        except requests.RequestException as exc:
+            log_warning(
+                logger,
+                "listener_context_ingest_failed",
+                source=payload.get("source"),
+                chat_id=payload.get("chat_id"),
+                message_id=payload.get("message_id"),
+                error=exc,
+            )
+
     async def is_allowed_chat(event) -> bool:
         if not config.channel_chat_ids and not config.channel_usernames:
             return True
@@ -131,8 +147,6 @@ def run_listener() -> None:
                 scanned_count += 1
                 if not message.message:
                     continue
-                if not should_forward_text(message.message):
-                    continue
 
                 payload = {
                     "source": "telegram_userbot_startup_history",
@@ -151,7 +165,7 @@ def run_listener() -> None:
                     message_id=message.id,
                     preview=message_preview(message.message),
                 )
-                post_to_webhook(payload)
+                post_to_context_ingest(payload)
                 posted_count += 1
 
         log_info(
@@ -167,6 +181,20 @@ def run_listener() -> None:
             log_info(logger, "listener_message_skipped", reason="chat_not_allowed", chat_id=event.chat_id)
             return
 
+        chat = await event.get_chat()
+        chat_title = getattr(chat, "title", getattr(chat, "username", None))
+        
+        payload = {
+            "source": "telegram_userbot",
+            "message_id": event.id,
+            "sender_id": event.sender_id,
+            "chat_id": event.chat_id,
+            "chat_title": chat_title,
+            "message": event.raw_text,
+            "date": event.date.isoformat() if event.date else None,
+        }
+        post_to_context_ingest(payload)
+
         if should_forward_text(event.raw_text):
             log_info(
                 logger,
@@ -177,14 +205,6 @@ def run_listener() -> None:
                 sender_id=event.sender_id,
                 preview=message_preview(event.raw_text),
             )
-            payload = {
-                "source": "telegram_userbot",
-                "message_id": event.id,
-                "sender_id": event.sender_id,
-                "chat_id": event.chat_id,
-                "message": event.raw_text,
-                "date": event.date.isoformat(),
-            }
             post_to_webhook(payload)
         else:
             log_info(

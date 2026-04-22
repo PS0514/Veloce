@@ -70,7 +70,11 @@ class SchedulerPipeline:
             source=inbound.source,
             chat_id=inbound.chat_id,
         )
-        extraction = self.glm_client.extract_tasks(inbound, request_id=request_id)
+        extraction = self.glm_client.extract_tasks(
+            inbound, 
+            retrieved_context=retrieved_context, 
+            request_id=request_id
+        )
         log_info(
             logger,
             "pipeline_glm_extract_done",

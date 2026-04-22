@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import requests
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
-from veloce.orchestrator.models import GlmExtraction, NormalizedInbound, TaskCandidate
+from veloce.orchestrator.models import ContextItem, GlmExtraction, NormalizedInbound, TaskCandidate
 
 logger = get_logger(__name__)
 
@@ -43,7 +43,12 @@ class GlmClient:
             return trimmed
         return f"{trimmed[:limit]}..."
 
-    def extract_tasks(self, inbound: NormalizedInbound, request_id: str | None = None) -> GlmExtraction:
+    def extract_tasks(
+        self, 
+        inbound: NormalizedInbound, 
+        retrieved_context: list[ContextItem] | None = None, 
+        request_id: str | None = None
+    ) -> GlmExtraction:
         if not self.api_key or not self.base_url:
             return self._fallback_extraction(inbound, request_id=request_id)
 
@@ -61,14 +66,29 @@ class GlmClient:
                 "5) If uncertain, still output best estimate and set needs_clarification=true.",
             ]
         )
-        user_prompt = "\n".join(
-            [
-                f"Current time: {now}",
-                f"Timezone: {inbound.timezone}",
-                "Input text:",
-                inbound.raw_text,
-            ]
-        )
+        
+        context_lines = []
+        if retrieved_context:
+            context_lines.append("Recent Context History:")
+            sorted_context = sorted(retrieved_context, key=lambda x: x.date if x.date else "")
+            for item in sorted_context:
+                sender = f"User {item.sender_id}" if item.sender_id else "User"
+                date_str = item.date or "Unknown time"
+                context_lines.append(f"[{date_str}] {sender}: {item.message}")
+            context_lines.append("---")
+
+        user_prompt_lines = [
+            f"Current time: {now}",
+            f"Timezone: {inbound.timezone}",
+        ]
+        if context_lines:
+            user_prompt_lines.extend(context_lines)
+            
+        user_prompt_lines.extend([
+            "Input text:",
+            inbound.raw_text,
+        ])
+        user_prompt = "\n".join(user_prompt_lines)
 
         payload = {
             "model": self.model,
