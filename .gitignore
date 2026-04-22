@@ -10,6 +10,8 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 data/*
+veloce_config.json
+*.session
 
 # Allow tracking of exported workflows
 !workflows/

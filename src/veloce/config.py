@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from typing import Set
 
+from veloce.runtime_config import get_config_value
+
 
 @dataclass(frozen=True)
 class ListenerConfig:
@@ -48,8 +50,9 @@ def parse_positive_int(raw_value: str | None, default: int) -> int:
 
 
 def load_listener_config() -> ListenerConfig:
-    channels_raw = os.getenv("TELEGRAM_CHANNEL_FILTERS", "")
-    keywords_raw = os.getenv("LISTENER_KEYWORDS", "")
+    # Runtime config (veloce_config.json) takes priority, .env is fallback
+    channels_raw = get_config_value("telegram_channel_filters") or os.getenv("TELEGRAM_CHANNEL_FILTERS", "")
+    keywords_raw = get_config_value("listener_keywords") or os.getenv("LISTENER_KEYWORDS", "")
     channel_chat_ids, channel_usernames = parse_channel_filters(channels_raw)
     startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "10"), 10)
 

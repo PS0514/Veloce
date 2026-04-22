@@ -6,6 +6,7 @@ from urllib.parse import quote
 import requests
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
+from veloce.runtime_config import get_config_value, set_config_value
 from veloce.orchestrator.models import TaskCandidate
 
 logger = get_logger(__name__)
@@ -34,10 +35,11 @@ class ScheduleResult:
 class GoogleCalendarClient:
     def __init__(self) -> None:
         self.enabled = os.getenv("ENABLE_GOOGLE_SYNC", "false").strip().lower() == "true"
-        self.calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip() or "primary"
+        # Runtime config (veloce_config.json) takes priority, .env is fallback
+        self.calendar_id = get_config_value("google_calendar_id") or os.getenv("GOOGLE_CALENDAR_ID", "primary").strip() or "primary"
         self.base_url = os.getenv("GOOGLE_CALENDAR_BASE_URL", "https://www.googleapis.com/calendar/v3").rstrip("/")
-        self.access_token = os.getenv("GOOGLE_ACCESS_TOKEN", "").strip()
-        self.refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN", "").strip()
+        self.access_token = get_config_value("google_access_token") or os.getenv("GOOGLE_ACCESS_TOKEN", "").strip()
+        self.refresh_token = get_config_value("google_refresh_token") or os.getenv("GOOGLE_REFRESH_TOKEN", "").strip()
         self.client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
         self.client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
         self.token_url = os.getenv("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
@@ -67,13 +69,23 @@ class GoogleCalendarClient:
         token = str(payload.get("access_token", "")).strip()
         if not token:
             raise RuntimeError("Google token refresh did not return access_token")
+        # Persist refreshed token to config file so subsequent calls reuse it
+        set_config_value("google_access_token", token)
         return token
 
     def _auth_headers(self) -> dict[str, str]:
-        token = self.access_token
-        if not token and self.refresh_token:
-            token = self._refresh_access_token()
-            self.access_token = token
+        # Always try refresh first if we have a refresh token — stored access
+        # tokens expire after ~1 hour and would cause 401 errors.
+        if self.refresh_token:
+            try:
+                token = self._refresh_access_token()
+                self.access_token = token
+            except Exception:
+                # Fall back to stored access token if refresh fails
+                token = self.access_token
+        else:
+            token = self.access_token
+
         if not token:
             raise RuntimeError("GOOGLE_ACCESS_TOKEN or GOOGLE_REFRESH_TOKEN is required when ENABLE_GOOGLE_SYNC=true")
 

@@ -166,6 +166,10 @@ def run_listener() -> None:
                     preview=message_preview(message.message),
                 )
                 post_to_context_ingest(payload)
+                
+                if should_forward_text(message.message):
+                    post_to_webhook(payload)
+                    
                 posted_count += 1
 
         log_info(

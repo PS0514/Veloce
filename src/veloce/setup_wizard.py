@@ -1,4 +1,5 @@
-﻿import subprocess
+import os
+import subprocess
 import threading
 import webbrowser
 from datetime import datetime
@@ -13,13 +14,14 @@ from telethon.errors import SessionPasswordNeededError
 
 from veloce.config import load_listener_config
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
+from veloce.runtime_config import load_runtime_config, merge_config_values, get_config_value
 
 logger = get_logger(__name__)
 
 APP = Flask(__name__)
+APP.secret_key = os.getenv("FLASK_SECRET_KEY", "veloce-local-setup-secret")
+
 ROOT = Path(__file__).resolve().parents[2]
-ENV_PATH = ROOT / ".env"
-DEFAULT_WEBHOOK = "http://n8n:5678/webhook/telegram"
 GOOGLE_CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -31,97 +33,79 @@ GOOGLE_SCOPES = [
 TELEGRAM_LOGIN_SESSION_KEY = "telegram_login_state"
 
 
-def to_bool(value: bool) -> str:
-    return "true" if value else "false"
+# ---------------------------------------------------------------------------
+# Helpers — read-only access to .env values via os.getenv
+# ---------------------------------------------------------------------------
+
+def _env(key: str, default: str = "") -> str:
+    """Read a value from the environment (.env loaded by dotenv at startup)."""
+    return os.getenv(key, default).strip()
 
 
-def read_env_file() -> dict[str, str]:
-    env_map: dict[str, str] = {}
-    if not ENV_PATH.exists():
-        return env_map
+def current_values() -> dict[str, str | bool]:
+    """Build a snapshot of all values the UI needs.
 
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, val = stripped.split("=", 1)
-        env_map[key.strip()] = val.strip()
-
-    return env_map
-
-
-APP.secret_key = read_env_file().get("FLASK_SECRET_KEY", "veloce-local-setup-secret")
-
-
-def default_values() -> dict[str, str | bool]:
-    env_map = read_env_file()
-    orchestrator_url = env_map.get("VELOCE_ORCHESTRATOR_URL", "http://127.0.0.1:8000/veloce-task-scheduler")
+    Static values come from os.getenv (i.e. .env — read-only).
+    Mutable values come from veloce_config.json.
+    """
+    cfg = load_runtime_config()
     return {
-        "telegram_api_id": env_map.get("TELEGRAM_API_ID", ""),
-        "telegram_api_hash": env_map.get("TELEGRAM_API_HASH", ""),
-        "n8n_webhook_url": env_map.get("N8N_WEBHOOK_URL", orchestrator_url),
-        "generic_timezone": env_map.get("GENERIC_TIMEZONE", "Asia/Kuala_Lumpur"),
-        "veloce_orchestrator_url": orchestrator_url,
-        "veloce_db_path": env_map.get("VELOCE_DB_PATH", "data/veloce.db"),
-        "google_calendar_id": env_map.get("GOOGLE_CALENDAR_ID", "primary"),
-        "google_client_id": env_map.get("GOOGLE_CLIENT_ID", ""),
-        "google_client_secret": env_map.get("GOOGLE_CLIENT_SECRET", ""),
-        "google_access_token": env_map.get("GOOGLE_ACCESS_TOKEN", ""),
-        "google_refresh_token": env_map.get("GOOGLE_REFRESH_TOKEN", ""),
-        "telegram_channels": env_map.get("TELEGRAM_CHANNEL_FILTERS", ""),
-        "listener_keywords": env_map.get("LISTENER_KEYWORDS", ""),
-        "enable_google_sync": env_map.get("ENABLE_GOOGLE_SYNC", "false").lower() == "true",
-        "start_docker": True,
+        # Static from .env (read-only, displayed but not editable)
+        "telegram_api_id": _env("TELEGRAM_API_ID"),
+        "telegram_api_hash": _env("TELEGRAM_API_HASH"),
+        "google_client_id": _env("GOOGLE_CLIENT_ID"),
+        "google_client_secret": _env("GOOGLE_CLIENT_SECRET"),
+        "enable_google_sync": _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true",
+        # Mutable from config file (editable via UI)
+        "google_access_token": cfg.get("google_access_token", ""),
+        "google_refresh_token": cfg.get("google_refresh_token", ""),
+        "google_calendar_id": cfg.get("google_calendar_id", _env("GOOGLE_CALENDAR_ID", "primary")),
+        "telegram_channels": cfg.get("telegram_channel_filters", _env("TELEGRAM_CHANNEL_FILTERS")),
+        "listener_keywords": cfg.get("listener_keywords", _env("LISTENER_KEYWORDS")),
+        # Transient UI state (not persisted)
         "telegram_phone": "",
         "telegram_code": "",
         "telegram_password": "",
     }
 
 
-def save_env(values: dict[str, str | bool]) -> None:
-    target_url = str(values["n8n_webhook_url"]).strip()
-    lines = [
-        f"TELEGRAM_API_ID={values['telegram_api_id']}",
-        f"TELEGRAM_API_HASH={values['telegram_api_hash']}",
-        f"N8N_WEBHOOK_URL={target_url}",
-        f"VELOCE_ORCHESTRATOR_URL={target_url}",
-        f"VELOCE_DB_PATH={values['veloce_db_path']}",
-        f"GENERIC_TIMEZONE={values['generic_timezone']}",
-        f"ENABLE_GOOGLE_SYNC={to_bool(bool(values['enable_google_sync']))}",
-        f"GOOGLE_CALENDAR_ID={values['google_calendar_id']}",
-        f"GOOGLE_CLIENT_ID={values['google_client_id']}",
-        f"GOOGLE_CLIENT_SECRET={values['google_client_secret']}",
-        f"GOOGLE_ACCESS_TOKEN={values['google_access_token']}",
-        f"GOOGLE_REFRESH_TOKEN={values['google_refresh_token']}",
-        f"TELEGRAM_CHANNEL_FILTERS={values['telegram_channels']}",
-        f"LISTENER_KEYWORDS={values['listener_keywords']}",
-    ]
-    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+# ---------------------------------------------------------------------------
+# Config persistence — writes ONLY to veloce_config.json, never .env
+# ---------------------------------------------------------------------------
+
+def save_settings(values: dict[str, str | bool]) -> None:
+    """Persist the mutable settings to veloce_config.json."""
+    merge_config_values({
+        "telegram_channel_filters": str(values.get("telegram_channels", "")),
+        "listener_keywords": str(values.get("listener_keywords", "")),
+        "google_calendar_id": str(values.get("google_calendar_id", "primary")),
+        "google_access_token": str(values.get("google_access_token", "")),
+        "google_refresh_token": str(values.get("google_refresh_token", "")),
+    })
 
 
-def merge_env_updates(updates: dict[str, str | bool]) -> None:
-    current = read_env_file()
-    current.update({key: str(value) for key, value in updates.items()})
-    lines = [f"{key}={value}" for key, value in current.items()]
-    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
+# ---------------------------------------------------------------------------
+# Google OAuth
+# ---------------------------------------------------------------------------
 
 def get_google_redirect_uri() -> str:
     return request.url_root.rstrip("/") + GOOGLE_REDIRECT_PATH
 
 
-def get_google_oauth_config(values: dict[str, str | bool]) -> tuple[str, str]:
-    client_id = str(values.get("google_client_id", "")).strip()
-    client_secret = str(values.get("google_client_secret", "")).strip()
+def _require_google_credentials() -> tuple[str, str]:
+    client_id = _env("GOOGLE_CLIENT_ID")
+    client_secret = _env("GOOGLE_CLIENT_SECRET")
     if not client_id or not client_secret:
-        raise RuntimeError("Google Client ID and Client Secret are required for browser login.")
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in .env "
+            "before using Google login."
+        )
     return client_id, client_secret
 
 
 @APP.route("/google/oauth/start")
 def google_oauth_start():
-    values = default_values()
-    client_id, _client_secret = get_google_oauth_config(values)
+    client_id, _client_secret = _require_google_credentials()
     state = token_urlsafe(24)
     session["google_oauth_state"] = state
 
@@ -147,14 +131,13 @@ def google_oauth_callback():
 
     error = request.args.get("error")
     if error:
-        return render_template("setup_wizard.html", values=default_values(), channels=[], google_calendars=[], success="", error=f"Google login failed: {error}", info="", google_info="", service_statuses=[], services_summary="")
+        return _render(error=f"Google login failed: {error}")
 
     code = request.args.get("code", "").strip()
     if not code:
         abort(400, description="Missing Google OAuth code")
 
-    values = default_values()
-    client_id, client_secret = get_google_oauth_config(values)
+    client_id, client_secret = _require_google_credentials()
 
     response = requests.post(
         GOOGLE_TOKEN_URL,
@@ -177,13 +160,11 @@ def google_oauth_callback():
     if not access_token:
         raise RuntimeError("Google OAuth token exchange did not return an access token.")
 
-    merge_env_updates(
-        {
-            "ENABLE_GOOGLE_SYNC": "true",
-            "GOOGLE_ACCESS_TOKEN": access_token,
-            "GOOGLE_REFRESH_TOKEN": refresh_token or values.get("google_refresh_token", ""),
-        }
-    )
+    # Save tokens to config file (not .env)
+    merge_config_values({
+        "google_access_token": access_token,
+        "google_refresh_token": refresh_token or get_config_value("google_refresh_token"),
+    })
     session.pop("google_oauth_state", None)
 
     message_bits = ["Google login completed successfully."]
@@ -192,51 +173,52 @@ def google_oauth_callback():
     if expires_in:
         message_bits.append(f"Expires in: {expires_in} seconds")
 
-    return render_template(
-        "setup_wizard.html",
-        values=default_values(),
-        channels=[],
-        google_calendars=[],
+    return _render(
         success=" ".join(message_bits),
-        error="",
-        info="",
         google_info="You can now list calendars from the authenticated account.",
-        service_statuses=[],
-        services_summary="",
     )
 
 
-def get_google_access_token(values: dict[str, str | bool]) -> str:
-    access_token = str(values.get("google_access_token", "")).strip()
-    if access_token:
-        return access_token
+def _get_fresh_google_token() -> str:
+    """Get a valid Google access token, refreshing if possible."""
+    refresh_token = get_config_value("google_refresh_token") or _env("GOOGLE_REFRESH_TOKEN")
+    client_id = _env("GOOGLE_CLIENT_ID")
+    client_secret = _env("GOOGLE_CLIENT_SECRET")
 
-    refresh_token = str(values.get("google_refresh_token", "")).strip()
-    client_id = str(values.get("google_client_id", "")).strip()
-    client_secret = str(values.get("google_client_secret", "")).strip()
-    if not (refresh_token and client_id and client_secret):
-        raise RuntimeError("Google Access Token or Refresh Token + Client ID + Client Secret is required to list calendars.")
+    # Always try refresh if we have the credentials
+    if refresh_token and client_id and client_secret:
+        response = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token = str(payload.get("access_token", "")).strip()
+        if not token:
+            raise RuntimeError("Google token refresh did not return an access token.")
+        # Persist the fresh token
+        merge_config_values({"google_access_token": token})
+        return token
 
-    response = requests.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        },
-        timeout=20,
+    # Fall back to stored access token (may be expired)
+    stored = get_config_value("google_access_token") or _env("GOOGLE_ACCESS_TOKEN")
+    if stored:
+        return stored
+
+    raise RuntimeError(
+        "Google Access Token or Refresh Token + Client ID + Client Secret "
+        "is required to list calendars."
     )
-    response.raise_for_status()
-    payload = response.json()
-    token = str(payload.get("access_token", "")).strip()
-    if not token:
-        raise RuntimeError("Google token refresh did not return an access token.")
-    return token
 
 
-def list_google_calendars(values: dict[str, str | bool]) -> list[dict[str, str]]:
-    token = get_google_access_token(values)
+def list_google_calendars() -> list[dict[str, str]]:
+    token = _get_fresh_google_token()
     response = requests.get(
         GOOGLE_CALENDAR_LIST_URL,
         headers={"Authorization": f"Bearer {token}"},
@@ -282,6 +264,10 @@ def list_google_calendars(values: dict[str, str | bool]) -> list[dict[str, str]]
     return results
 
 
+# ---------------------------------------------------------------------------
+# Telegram login
+# ---------------------------------------------------------------------------
+
 def clear_telegram_login_state() -> None:
     session.pop(TELEGRAM_LOGIN_SESSION_KEY, None)
 
@@ -291,7 +277,12 @@ def get_telegram_login_state() -> dict[str, str]:
     return state if isinstance(state, dict) else {}
 
 
-def start_telegram_web_login(api_id: str, api_hash: str, phone: str) -> str:
+def start_telegram_web_login(phone: str) -> str:
+    api_id = _env("TELEGRAM_API_ID")
+    api_hash = _env("TELEGRAM_API_HASH")
+    if not api_id or not api_hash:
+        raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env.")
+
     config = load_listener_config()
     client = TelegramClient(config.session_path, api_id, api_hash)
     client.connect()
@@ -409,14 +400,19 @@ def get_telegram_user_info() -> tuple[bool, str]:
         return False, f"Error checking status: {str(exc)[:50]}"
 
 
-def list_user_channels(api_id: str, api_hash: str) -> list[dict[str, str]]:
+def list_user_channels() -> list[dict[str, str]]:
+    api_id = _env("TELEGRAM_API_ID")
+    api_hash = _env("TELEGRAM_API_HASH")
+    if not api_id or not api_hash:
+        raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env.")
+
     config = load_listener_config()
     channels: list[dict[str, str]] = []
     client = TelegramClient(config.session_path, api_id, api_hash)
     client.connect()
     try:
         if not client.is_user_authorized():
-            raise RuntimeError("Telegram session is not authenticated. Enable Telegram login and save once first.")
+            raise RuntimeError("Telegram session is not authenticated. Complete Telegram login first.")
 
         for dialog in client.iter_dialogs():
             entity = dialog.entity
@@ -448,34 +444,38 @@ def list_user_channels(api_id: str, api_hash: str) -> list[dict[str, str]]:
     return channels
 
 
-def try_auto_load_channels(values: dict[str, str | bool]) -> tuple[list[dict[str, str]], str]:
-    api_id = str(values.get("telegram_api_id", "")).strip()
-    api_hash = str(values.get("telegram_api_hash", "")).strip()
+def try_auto_load_channels() -> tuple[list[dict[str, str]], str]:
+    api_id = _env("TELEGRAM_API_ID")
+    api_hash = _env("TELEGRAM_API_HASH")
     if not api_id or not api_hash:
         return [], ""
 
     try:
-        channels = list_user_channels(api_id, api_hash)
+        channels = list_user_channels()
         return channels, f"Auto-loaded {len(channels)} channels/chats from your Telegram session."
     except Exception as exc:
         message = str(exc).lower()
         if "not authenticated" in message or "authorized" in message:
-            return [], "Telegram session is not authenticated yet. Enable Telegram login and save once to auto-load channels."
+            return [], "Telegram session is not authenticated yet. Complete Telegram login first to auto-load channels."
         return [], ""
 
 
-def try_auto_load_google_calendars(values: dict[str, str | bool]) -> tuple[list[dict[str, str]], str]:
-    if not bool(values.get("enable_google_sync")):
+def try_auto_load_google_calendars() -> tuple[list[dict[str, str]], str]:
+    if not _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true":
         return [], ""
 
     try:
-        calendars = list_google_calendars(values)
+        calendars = list_google_calendars()
         if not calendars:
             return [], "No Google calendars were returned for the current account."
         return calendars, f"Loaded {len(calendars)} Google calendar(s). Select one as the scheduler target."
     except Exception as exc:
         return [], f"Google calendar lookup skipped or failed: {exc}"
 
+
+# ---------------------------------------------------------------------------
+# Docker compose helpers (development)
+# ---------------------------------------------------------------------------
 
 def compose_base_command() -> list[str]:
     deploy_compose = ROOT / "deploy" / "docker-compose.yaml"
@@ -538,9 +538,49 @@ def get_services_status() -> tuple[list[dict[str, str]], str]:
         return [], f"Service status unavailable: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Render helper
+# ---------------------------------------------------------------------------
+
+def _render(*, success="", error="", info="", google_info="",
+            channels=None, google_calendars=None,
+            telegram_info=None, telegram_login_state=None,
+            service_statuses=None, services_summary=""):
+    """Shorthand to render the wizard template with all required variables."""
+    if channels is None:
+        channels = []
+    if google_calendars is None:
+        google_calendars = []
+    if service_statuses is None:
+        service_statuses = []
+    if telegram_login_state is None:
+        telegram_login_state = {}
+    if telegram_info is None:
+        telegram_info = "Telegram not logged in. Click Sign in with Telegram."
+
+    return render_template(
+        "setup_wizard.html",
+        values=current_values(),
+        channels=channels,
+        google_calendars=google_calendars,
+        success=success,
+        error=error,
+        info=info,
+        telegram_info=telegram_info,
+        telegram_login_state=telegram_login_state,
+        google_info=google_info,
+        service_statuses=service_statuses,
+        services_summary=services_summary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main route
+# ---------------------------------------------------------------------------
+
 @APP.route("/", methods=["GET", "POST"])
 def index():
-    values = default_values()
+    values = current_values()
     channels: list[dict[str, str]] = []
     google_calendars: list[dict[str, str]] = []
     success = ""
@@ -560,91 +600,71 @@ def index():
     if request.method == "POST":
         action = request.form.get("action", "save")
         log_info(logger, "setup_action_received", action=action)
+
+        # Collect mutable form values
         values.update(
             {
-                "telegram_api_id": request.form.get("telegram_api_id", "").strip(),
-                "telegram_api_hash": request.form.get("telegram_api_hash", "").strip(),
-                "n8n_webhook_url": request.form.get("n8n_webhook_url", DEFAULT_WEBHOOK).strip() or DEFAULT_WEBHOOK,
-                "generic_timezone": request.form.get("generic_timezone", "Asia/Kuala_Lumpur").strip() or "Asia/Kuala_Lumpur",
-                "veloce_db_path": request.form.get("veloce_db_path", "data/veloce.db").strip() or "data/veloce.db",
-                "google_calendar_id": request.form.get("google_calendar_id", "primary").strip() or "primary",
-                "google_client_id": request.form.get("google_client_id", "").strip(),
-                "google_client_secret": request.form.get("google_client_secret", "").strip(),
-                "google_access_token": request.form.get("google_access_token", "").strip(),
-                "google_refresh_token": request.form.get("google_refresh_token", "").strip(),
                 "telegram_channels": request.form.get("telegram_channels", "").strip(),
                 "listener_keywords": request.form.get("listener_keywords", "").strip(),
-                "enable_google_sync": bool(request.form.get("enable_google_sync")),
-                "start_docker": bool(request.form.get("start_docker")),
+                "google_calendar_id": request.form.get("google_calendar_id", "primary").strip() or "primary",
                 "telegram_phone": request.form.get("telegram_phone", "").strip(),
                 "telegram_code": request.form.get("telegram_code", "").strip(),
                 "telegram_password": request.form.get("telegram_password", "").strip(),
             }
         )
 
-        actions_requiring_telegram = {"save", "save_restart", "list_channels"}
-        needs_telegram = action in actions_requiring_telegram
+        try:
+            if action == "telegram_login":
+                phone = str(values["telegram_phone"]).strip()
+                if not phone:
+                    raise RuntimeError("Telegram phone number is required (example: +60123456789).")
+                telegram_flow_info = start_telegram_web_login(phone)
 
-        if needs_telegram and (not values["telegram_api_id"] or not values["telegram_api_hash"]):
-            error = "Telegram API ID and API Hash are required."
-        else:
-            try:
-                if action == "telegram_login":
-                    api_id = str(values["telegram_api_id"]).strip()
-                    api_hash = str(values["telegram_api_hash"]).strip()
-                    phone = str(values["telegram_phone"]).strip()
-                    if not api_id or not api_hash:
-                        raise RuntimeError("Telegram API ID and API Hash are required to login.")
-                    if not phone:
-                        raise RuntimeError("Telegram phone number is required (example: +60123456789).")
-                    telegram_flow_info = start_telegram_web_login(api_id, api_hash, phone)
-                elif action == "telegram_verify_code":
-                    success_login, message = complete_telegram_web_login(
-                        str(values["telegram_code"]).strip(),
-                        str(values["telegram_password"]).strip(),
-                    )
-                    if success_login:
-                        success = message
-                    else:
-                        telegram_flow_info = message
-                elif action == "telegram_cancel_login":
-                    clear_telegram_login_state()
-                    telegram_flow_info = "Telegram login flow cancelled."
-                elif action == "list_channels":
-                    channels = list_user_channels(str(values["telegram_api_id"]), str(values["telegram_api_hash"]))
-                    success = f"Loaded {len(channels)} channels/chats from Telegram."
-                elif action == "list_google_calendars":
-                    google_calendars = list_google_calendars(values)
-                    if google_calendars and (not values["google_calendar_id"] or values["google_calendar_id"] == "primary"):
-                        values["google_calendar_id"] = google_calendars[0]["id"]
-                    success = f"Loaded {len(google_calendars)} Google calendars."
-                elif action in {"save", "save_restart"}:
-                    save_env(values)
-
-                    if action == "save_restart":
-                        restart_docker_stack()
-                        success = "Saved configuration and restarted Docker services with recreated containers."
-                    elif values["start_docker"]:
-                        start_docker_stack()
-                        success = "Saved configuration and started Docker services."
-                    else:
-                        success = "Saved configuration. Services were not changed."
-                elif action == "services_start":
-                    start_docker_stack()
-                    success = "Docker services started."
-                elif action == "services_stop":
-                    stop_docker_stack()
-                    success = "Docker services stopped."
-                elif action == "services_restart":
-                    restart_docker_stack()
-                    success = "Docker services restarted with recreated containers."
-                elif action == "services_refresh":
-                    success = "Service status refreshed."
+            elif action == "telegram_verify_code":
+                success_login, message = complete_telegram_web_login(
+                    str(values["telegram_code"]).strip(),
+                    str(values["telegram_password"]).strip(),
+                )
+                if success_login:
+                    success = message
                 else:
-                    error = f"Unknown action: {action}"
-            except Exception as exc:
-                error = f"Setup failed: {exc}"
-                log_warning(logger, "setup_action_failed", action=action, error=exc)
+                    telegram_flow_info = message
+
+            elif action == "telegram_cancel_login":
+                clear_telegram_login_state()
+                telegram_flow_info = "Telegram login flow cancelled."
+
+            elif action == "list_channels":
+                channels = list_user_channels()
+                success = f"Loaded {len(channels)} channels/chats from Telegram."
+
+            elif action == "list_google_calendars":
+                google_calendars = list_google_calendars()
+                if google_calendars and (not values["google_calendar_id"] or values["google_calendar_id"] == "primary"):
+                    values["google_calendar_id"] = google_calendars[0]["id"]
+                success = f"Loaded {len(google_calendars)} Google calendars."
+
+            elif action == "save":
+                save_settings(values)
+                success = "Settings saved to config file."
+
+            elif action == "services_start":
+                start_docker_stack()
+                success = "Docker services started."
+            elif action == "services_stop":
+                stop_docker_stack()
+                success = "Docker services stopped."
+            elif action == "services_restart":
+                restart_docker_stack()
+                success = "Docker services restarted with recreated containers."
+            elif action == "services_refresh":
+                success = "Service status refreshed."
+            else:
+                error = f"Unknown action: {action}"
+
+        except Exception as exc:
+            error = f"Setup failed: {exc}"
+            log_warning(logger, "setup_action_failed", action=action, error=exc)
 
         if not error:
             log_info(logger, "setup_action_done", action=action, success=success or None, info=info or None)
@@ -652,10 +672,10 @@ def index():
         service_statuses, services_summary = get_services_status()
 
         if action != "list_channels":
-            channels, auto_info = try_auto_load_channels(values)
+            channels, auto_info = try_auto_load_channels()
             if auto_info and not info and not telegram_flow_info:
                 info = auto_info
-        google_calendars, google_info = try_auto_load_google_calendars(values)
+        google_calendars, google_info = try_auto_load_google_calendars()
         telegram_login_state = get_telegram_login_state()
         
         # Re-check Telegram status after login
@@ -665,8 +685,8 @@ def index():
         else:
             telegram_info = "Telegram not logged in. Click Sign in with Telegram."
     else:
-        channels, info = try_auto_load_channels(values)
-        google_calendars, google_info = try_auto_load_google_calendars(values)
+        channels, info = try_auto_load_channels()
+        google_calendars, google_info = try_auto_load_google_calendars()
 
     if telegram_flow_info:
         info = telegram_flow_info
