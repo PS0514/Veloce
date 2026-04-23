@@ -720,7 +720,10 @@ def index():
             channels, auto_info = try_auto_load_channels()
             if auto_info and not info and not telegram_flow_info:
                 info = auto_info
-        google_calendars, google_info = try_auto_load_google_calendars()
+        
+        if action != "list_google_calendars":
+            google_calendars, google_info = try_auto_load_google_calendars()
+        
         telegram_login_state = get_telegram_login_state()
         
         # Re-check Telegram status after login
