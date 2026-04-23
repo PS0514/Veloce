@@ -12,6 +12,8 @@ from veloce.orchestrator.models import (
     ContextIngestRequest,
     ContextRetrieveRequest,
     ContextRetrieveResponse,
+    ManualCalendarAddRequest,
+    ManualCalendarAddResponse,
     NormalizedInbound,
     SchedulerInbound,
     SchedulerResponse,
@@ -227,6 +229,125 @@ def veloce_task_scheduler(
     #     )
 
     return all_results
+
+
+@router.post("/veloce-manual-calendar-add", response_model=ManualCalendarAddResponse)
+def veloce_manual_calendar_add(payload: ManualCalendarAddRequest) -> ManualCalendarAddResponse:
+    text = (payload.message or payload.raw_text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing message/raw_text in request payload")
+
+    req_id = _request_id(source=payload.source, chat_id=None, message_id=None)
+    log_info(
+        logger,
+        "manual_calendar_add_received",
+        request_id=req_id,
+        source=payload.source,
+        text_len=len(text),
+    )
+
+    if not services.calendar_client.enabled:
+        return ManualCalendarAddResponse(
+            ok=False,
+            scheduled=False,
+            status="calendar_disabled",
+            state="calendar_disabled",
+            message="Google sync is disabled",
+            ai_used=False,
+        )
+
+    # AI processing for time extraction and event name suggestion
+    ai_used = False
+    try:
+        # 1. Package the text into the object the AI expects
+        inbound = NormalizedInbound(
+            source=payload.source or "manual_selection",
+            message_id=None,
+            sender_id=None,
+            chat_id=None,
+            chat_title=None,
+            inbound_date=datetime.now(timezone.utc).isoformat(),
+            timezone=payload.timezone or DEFAULT_TIMEZONE,
+            raw_text=text,
+        )
+
+        # 2. Call the correct method
+        ai_response = services.glm_client.extract_tasks(inbound)
+        
+        extracted_time = None
+        suggested_name = None
+
+        # 3. Extract the data from the Pydantic models
+        if getattr(ai_response, "tasks", None) and len(ai_response.tasks) > 0:
+            first_task = ai_response.tasks[0]
+            suggested_name = first_task.task_name
+            # If start_time is missing, fallback to the deadline
+            extracted_time = first_task.start_time_iso or first_task.deadline_iso 
+
+        ai_used = True
+    except Exception as exc:
+        print(f"\n--- DEBUG: AI FAILED --- \n{exc}\n------------------------\n")
+        log_warning(
+            logger,
+            "ai_processing_failed",
+            request_id=req_id,
+            error=str(exc),
+        )
+        extracted_time = None
+        suggested_name = None
+
+    # Combine AI suggestions with manual input
+    if extracted_time:
+        event_text = f"{suggested_name or 'Event'} at {extracted_time}"
+    else:
+        # If no time is found, use the AI suggested name. 
+        # If the AI failed completely, fallback to the raw highlighted text.
+        event_text = suggested_name or text
+
+    try:
+        event = services.calendar_client.quick_add_event(text=event_text)
+    except Exception as exc:
+        log_warning(
+            logger,
+            "manual_calendar_add_failed",
+            request_id=req_id,
+            error=str(exc),
+        )
+        return ManualCalendarAddResponse(
+            ok=False,
+            scheduled=False,
+            status="error",
+            state="calendar_create_failed",
+            message=f"Failed to create calendar event: {exc}",
+            ai_used=ai_used,
+        )
+
+    start_raw = ""
+    if isinstance(event, dict):
+        start_payload = event.get("start")
+        if isinstance(start_payload, dict):
+            start_raw = str(start_payload.get("dateTime") or start_payload.get("date") or "")
+
+    log_info(
+        logger,
+        "manual_calendar_add_success",
+        request_id=req_id,
+        event_id=event.get("id") if isinstance(event, dict) else None,
+    )
+
+    return ManualCalendarAddResponse(
+        ok=True,
+        scheduled=True,
+        status="scheduled",
+        state="manual_direct_scheduled",
+        message="Added directly to Google Calendar.",
+        ai_used=False,
+        calendar_event_id=str(event.get("id")) if isinstance(event, dict) and event.get("id") else None,
+        calendar_link=str(event.get("htmlLink")) if isinstance(event, dict) and event.get("htmlLink") else None,
+        title=str(event.get("summary")) if isinstance(event, dict) and event.get("summary") else None,
+        date=start_raw.split("T")[0] if start_raw else None,
+        time=start_raw.split("T")[1] if "T" in start_raw else None,
+    )
 
 
 app = _create_app()

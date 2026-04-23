@@ -1,8 +1,9 @@
 const MANUAL_MENU_ID = "veloce-extract-task";
-const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_TIMEOUT_MS = 1200000;
 const NOTIFICATION_ICON_PATH = "Veloce_Logo.png";
 const API_BASE_URL = "http://127.0.0.1:8000";
 const TASK_INGEST_PATH = "/veloce-task-scheduler";
+const MANUAL_CALENDAR_ADD_PATH = "/veloce-manual-calendar-add";
 const ACCOUNT_PORTAL_URL = "http://127.0.0.1:8765/";
 const ACCOUNT_STATUS_URL = "http://127.0.0.1:8765/auth/status";
 
@@ -140,10 +141,24 @@ function notifyStatus(status, message) {
   });
 }
 
-async function callServerApi(payload) {
+async function callServerApi(payload, { directCalendarAdd = false } = {}) {
   const { ai_prompt: aiPrompt } = await chrome.storage.local.get(["ai_prompt"]);
-  const endpoint = `${API_BASE_URL}${TASK_INGEST_PATH}`;
+  const endpoint = `${API_BASE_URL}${directCalendarAdd ? MANUAL_CALENDAR_ADD_PATH : TASK_INGEST_PATH}`;
   const payloadText = typeof payload?.text === "string" ? payload.text : "";
+
+  const body = directCalendarAdd
+    ? {
+        source: payload?.source || "manual_selection",
+        message: payloadText,
+        raw_text: payloadText,
+        date: payload?.timestamp || new Date().toISOString()
+      }
+    : {
+        ...payload,
+        message: payloadText,
+        raw_text: payloadText,
+        prompt: aiPrompt || ""
+      };
 
   setWorkflowState({ isLoading: true, status: "processing", statusMessage: "", error: "" });
 
@@ -157,12 +172,7 @@ async function callServerApi(payload) {
         "Content-Type": "application/json"
       },
       credentials: "include",
-      body: JSON.stringify({
-        ...payload,
-        message: payloadText,
-        raw_text: payloadText,
-        prompt: aiPrompt || ""
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal
     });
 
@@ -177,13 +187,16 @@ async function callServerApi(payload) {
 
     const data = await response.json().catch(() => ({}));
     chrome.storage.local.set({ aiResponse: data });
+    const statusMessage = data?.message || (directCalendarAdd ? "Added directly to calendar." : "Event created successfully.");
+    const status = data?.status || (data?.scheduled ? "scheduled" : "success");
+
     setWorkflowState({
       isLoading: false,
       status: "success",
-      statusMessage: data?.message || "Event created successfully.",
+      statusMessage,
       error: ""
     });
-    notifyStatus(data.status, data.message);
+    notifyStatus(status, statusMessage);
   } catch (error) {
     const friendlyError =
       error?.name === "AbortError"
@@ -252,9 +265,73 @@ async function processPayload(payload, sender, sendResponse) {
     return;
   }
 
-  callServerApi(payload)
+  const { manual_trigger_mode: manualTriggerMode } = await chrome.storage.local.get([
+    "manual_trigger_mode"
+  ]);
+  const directCalendarAdd = manualTriggerMode !== false && (
+    (payload && typeof payload.source === 'string' && payload.source.includes("-manual")) ||
+    payload?.source === 'manual_selection' ||
+    sender?.id === chrome.runtime.id
+  );
+
+  callServerApi(payload, { directCalendarAdd })
     .then(() => sendResponse({ ok: true }))
     .catch(() => sendResponse({ ok: false }));
+}
+
+function handleContextMenuClick(info, tab) {
+  chrome.storage.local.get(["manual_trigger_mode"], (state) => {
+    const manualMode = state.manual_trigger_mode !== false;
+
+    const selectedText = info.selectionText || "";
+    if (!selectedText.trim()) {
+      chrome.notifications.create({
+        type: "basic",
+        iconUrl: NOTIFICATION_ICON_PATH,
+        title: "Veloce",
+        message: "No text selected. Please highlight text to add to calendar."
+      });
+      return;
+    }
+
+    const endpoint = manualMode ? MANUAL_CALENDAR_ADD_PATH : TASK_INGEST_PATH;
+    const body = {
+      source: "chrome-extension",
+      message: selectedText,
+      raw_text: selectedText,
+      date: new Date().toISOString()
+    };
+
+    fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        chrome.notifications.create({
+          type: "basic",
+          iconUrl: NOTIFICATION_ICON_PATH,
+          title: "Veloce",
+          message: manualMode
+            ? "Event added directly to calendar."
+            : "AI-assisted scheduling completed."
+        });
+      })
+      .catch((error) => {
+        chrome.notifications.create({
+          type: "basic",
+          iconUrl: NOTIFICATION_ICON_PATH,
+          title: "Veloce",
+          message: `Failed to add event: ${error.message}`
+        });
+      });
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

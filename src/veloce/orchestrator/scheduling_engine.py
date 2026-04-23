@@ -171,6 +171,22 @@ class GoogleCalendarClient:
         response.raise_for_status()
         return response.json()
 
+    def quick_add_event(self, *, text: str) -> dict:
+        quick_text = text.strip()
+        if not quick_text:
+            raise ValueError("Quick add text cannot be empty")
+
+        encoded_calendar_id = quote(self.calendar_id, safe="")
+        url = f"{self.base_url}/calendars/{encoded_calendar_id}/events/quickAdd"
+        response = requests.post(
+            url,
+            headers=self._auth_headers(),
+            params={"text": quick_text},
+            timeout=25,
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 class SchedulingEngine:
     def __init__(self, calendar_client: GoogleCalendarClient) -> None:
