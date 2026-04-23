@@ -67,18 +67,6 @@ function getLocalState(keys, fallback = {}) {
   });
 }
 
-function isAutoDetectEnabled() {
-  return getLocalState(["auto_detect_mode"], { auto_detect_mode: false }).then(
-    (result) => result.auto_detect_mode !== false
-  );
-}
-
-function isAutoReadAllowed() {
-  return getLocalState(["auto_read_permissions"], { auto_read_permissions: false }).then(
-    (result) => result.auto_read_permissions !== false
-  );
-}
-
 function isManualTriggerEnabled() {
   return getLocalState(["manual_trigger_mode"], { manual_trigger_mode: false }).then(
     (result) => result.manual_trigger_mode !== false
@@ -103,19 +91,11 @@ function detectSource() {
   return "unknown";
 }
 
-function getStoredUserId() {
-  return getLocalState(["user_id"], { user_id: "anonymous" }).then(
-    (result) => result.user_id || "anonymous"
-  );
-}
-
 async function makePayload(source, text) {
-  const userId = await getStoredUserId();
   return {
     source,
     text,
     page_url: window.location.href,
-    user_id: userId,
     timestamp: new Date().toISOString()
   };
 }
@@ -349,10 +329,8 @@ function getTelegramMessageTexts(root = document) {
 }
 
 async function sendAutoExtractionIfAvailable() {
-  const autoDetectEnabled = await isAutoDetectEnabled();
-  const autoReadAllowed = await isAutoReadAllowed();
-  if (!autoDetectEnabled || !autoReadAllowed) {
-    console.debug("[Veloce] Auto scan skipped: auto settings disabled");
+  const manualTriggerEnabled = await isManualTriggerEnabled();
+  if (manualTriggerEnabled) {
     return;
   }
 
@@ -489,9 +467,8 @@ function findTelegramChatContainer() {
 }
 
 async function pushNewTelegramMessages() {
-  const autoDetectEnabled = await isAutoDetectEnabled();
-  const autoReadAllowed = await isAutoReadAllowed();
-  if (!autoDetectEnabled || !autoReadAllowed) {
+  const manualTriggerEnabled = await isManualTriggerEnabled();
+  if (manualTriggerEnabled) {
     return;
   }
 
@@ -675,7 +652,7 @@ if (isExtensionContextActive()) {
       return;
     }
 
-    if (changes.auto_detect_mode || changes.auto_read_permissions) {
+    if (changes.manual_trigger_mode) {
       startAutoDetection();
     }
   });

@@ -1,13 +1,13 @@
 const MANUAL_MENU_ID = "veloce-extract-task";
 const DEFAULT_TIMEOUT_MS = 15000;
 const NOTIFICATION_ICON_PATH = "Veloce_Logo.png";
+const API_BASE_URL = "http://127.0.0.1:8000";
+const TASK_INGEST_PATH = "/veloce-task-scheduler";
+const ACCOUNT_PORTAL_URL = "http://127.0.0.1:8765/";
+const ACCOUNT_STATUS_URL = "http://127.0.0.1:8765/auth/status";
 
 const DEFAULT_SETTINGS = {
-  auto_detect_mode: true,
-  auto_read_permissions: true,
   manual_trigger_mode: true,
-  user_id: "anonymous",
-  webhook_url: "",
   ai_prompt: ""
 };
 
@@ -140,20 +140,10 @@ function notifyStatus(status, message) {
   });
 }
 
-async function callWebhook(payload) {
-  const { webhook_url: webhookUrl, ai_prompt: aiPrompt } = await chrome.storage.local.get([
-    "webhook_url",
-    "ai_prompt"
-  ]);
-
-  if (!webhookUrl) {
-    setWorkflowState({
-      isLoading: false,
-      status: "error",
-      error: "Webhook URL is not configured in settings."
-    });
-    return;
-  }
+async function callServerApi(payload) {
+  const { ai_prompt: aiPrompt } = await chrome.storage.local.get(["ai_prompt"]);
+  const endpoint = `${API_BASE_URL}${TASK_INGEST_PATH}`;
+  const payloadText = typeof payload?.text === "string" ? payload.text : "";
 
   setWorkflowState({ isLoading: true, status: "processing", statusMessage: "", error: "" });
 
@@ -161,23 +151,31 @@ async function callWebhook(payload) {
   const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
+      credentials: "include",
       body: JSON.stringify({
         ...payload,
+        message: payloadText,
+        raw_text: payloadText,
         prompt: aiPrompt || ""
       }),
       signal: controller.signal
     });
 
     if (!response.ok) {
-      throw new Error(`Webhook failed with HTTP ${response.status}`);
+      const errorBody = await response.text().catch(() => "");
+      throw new Error(
+        errorBody
+          ? `API request failed with HTTP ${response.status}: ${errorBody}`
+          : `API request failed with HTTP ${response.status}`
+      );
     }
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     chrome.storage.local.set({ aiResponse: data });
     setWorkflowState({
       isLoading: false,
@@ -189,8 +187,8 @@ async function callWebhook(payload) {
   } catch (error) {
     const friendlyError =
       error?.name === "AbortError"
-        ? "System busy, please try again."
-        : "System busy, please try again.";
+        ? "Backend request timed out. Please try again."
+        : error?.message || "System busy, please try again.";
 
     setWorkflowState({
       isLoading: false,
@@ -203,7 +201,34 @@ async function callWebhook(payload) {
   }
 }
 
-function processPayload(payload, sender, sendResponse) {
+async function getAccountStatus() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(ACCOUNT_STATUS_URL, {
+      method: "GET",
+      credentials: "include",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return { ok: false, error: `Status check failed with HTTP ${response.status}` };
+    }
+
+    const status = await response.json();
+    return { ok: true, status };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.name === "AbortError" ? "Status check timed out." : "Unable to reach account server."
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function processPayload(payload, sender, sendResponse) {
   persistPayload(payload);
   persistTaskHistory(payload);
   console.log("[Veloce] Payload received", {
@@ -211,12 +236,40 @@ function processPayload(payload, sender, sendResponse) {
     payload
   });
 
-  callWebhook(payload)
+  const statusResult = await getAccountStatus();
+  if (!statusResult.ok || !statusResult.status?.account_ready) {
+    const setupError = statusResult.ok
+      ? "Finish account setup (Google + Telegram) in Connect Account before using extraction."
+      : statusResult.error || "Unable to verify account setup status.";
+
+    setWorkflowState({
+      isLoading: false,
+      status: "error",
+      error: setupError
+    });
+    notifyStatus("error", setupError);
+    sendResponse({ ok: false });
+    return;
+  }
+
+  callServerApi(payload)
     .then(() => sendResponse({ ok: true }))
     .catch(() => sendResponse({ ok: false }));
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "get-account-status") {
+    getAccountStatus().then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === "open-account-portal") {
+    chrome.tabs.create({ url: ACCOUNT_PORTAL_URL }, () => {
+      sendResponse({ ok: !chrome.runtime.lastError });
+    });
+    return true;
+  }
+
   if (message?.type === "extracted-payload" && message.payload) {
     processPayload(message.payload, sender, sendResponse);
     return true;
