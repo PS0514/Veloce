@@ -154,6 +154,8 @@ class SQLiteStore:
                 where.append("tc.date >= ?")
                 base_params.append(since)
 
+            safe_query = f'"{query}"' if query else ""
+
             if query:
                 sql = f"""
                     SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
@@ -163,7 +165,7 @@ class SQLiteStore:
                     ORDER BY tc.date DESC
                     LIMIT ?
                 """
-                fts_params = [*base_params, query, fetch_limit]
+                fts_params = [*base_params, safe_query, fetch_limit]
                 rows = conn.execute(sql, fts_params).fetchall()
                 if rows:
                     log_info(

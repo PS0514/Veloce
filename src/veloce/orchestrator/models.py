@@ -30,6 +30,7 @@ class NormalizedInbound(BaseModel):
 class TaskCandidate(BaseModel):
     task_name: str
     deadline_iso: str
+    start_time_iso: str | None = None  # NEW: For fixed-time events
     estimated_duration_minutes: int = Field(ge=15)
     confidence: float = Field(ge=0, le=1)
     needs_clarification: bool = False

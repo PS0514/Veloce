@@ -75,12 +75,17 @@ def current_values() -> dict[str, str | bool]:
 
 def save_settings(values: dict[str, str | bool]) -> None:
     """Persist the mutable settings to veloce_config.json."""
+    calendar_id = str(values.get("google_calendar_id", "")).strip()
+
+    auto_enable = bool(calendar_id and calendar_id != "primary")
+
     merge_config_values({
         "telegram_channel_filters": str(values.get("telegram_channels", "")),
         "listener_keywords": str(values.get("listener_keywords", "")),
         "google_calendar_id": str(values.get("google_calendar_id", "primary")),
         "google_access_token": str(values.get("google_access_token", "")),
         "google_refresh_token": str(values.get("google_refresh_token", "")),
+        "enable_google_sync": auto_enable,
     })
 
 

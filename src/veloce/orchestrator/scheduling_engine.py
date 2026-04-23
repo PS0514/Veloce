@@ -34,7 +34,7 @@ class ScheduleResult:
 
 class GoogleCalendarClient:
     def __init__(self) -> None:
-        self.enabled = os.getenv("ENABLE_GOOGLE_SYNC", "false").strip().lower() == "true"
+        self.enabled = get_config_value("enable_google_sync", default=False) 
         # Runtime config (veloce_config.json) takes priority, .env is fallback
         self.calendar_id = get_config_value("google_calendar_id") or os.getenv("GOOGLE_CALENDAR_ID", "primary").strip() or "primary"
         self.base_url = os.getenv("GOOGLE_CALENDAR_BASE_URL", "https://www.googleapis.com/calendar/v3").rstrip("/")
@@ -236,6 +236,7 @@ class SchedulingEngine:
         task: TaskCandidate,
         timezone_name: str,
         request_id: str | None = None,
+        ephemeral_busy_slots: list[BusyInterval] | None = None,
     ) -> ScheduleResult:
         log_info(
             logger,
@@ -291,6 +292,10 @@ class SchedulingEngine:
 
         try:
             busy = self.calendar_client.list_busy_intervals(time_min=now_utc, time_max=deadline_utc)
+
+            if ephemeral_busy_slots:
+                busy.extend(ephemeral_busy_slots)
+
             log_info(logger, "schedule_busy_intervals", request_id=request_id, count=len(busy))
         except Exception as exc:
             logger.exception("schedule_calendar_read_failed request_id=%s error=%s", request_id, exc)
@@ -300,28 +305,92 @@ class SchedulingEngine:
                 state="calendar_read_failed",
             )
 
-        found = self._find_free_slot(
-            now_utc=now_utc,
-            deadline_utc=deadline_utc,
-            duration_minutes=task.estimated_duration_minutes,
-            busy=busy,
-        )
-        if found is None:
-            log_info(logger, "schedule_no_slot", request_id=request_id)
-            return ScheduleResult(
-                scheduled=False,
-                reason="No free slot before deadline",
-                state="no_slot",
-            )
+        if task.start_time_iso:
+            try:
+                proposed_start = datetime.fromisoformat(task.start_time_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
+                proposed_end = proposed_start + timedelta(minutes=task.estimated_duration_minutes)
 
-        proposed_start, proposed_end = found
+                if proposed_start <= now_utc:
+                    log_info(
+                        logger,
+                        "schedule_start_time_past",
+                        request_id=request_id,
+                        now=now_utc.isoformat(),
+                        start=proposed_start.isoformat(),
+                    )
+                    return ScheduleResult(
+                        scheduled=False,
+                        reason="Requested start time is in the past",
+                        state="start_time_in_past",
+                        needs_clarification=True,
+                        clarification_question="The time you requested is in the past. Should I find the next available slot or skip scheduling?",
+                    )
+
+                log_info(
+                    logger,
+                    "schedule_fixed_time_requested",
+                    request_id=request_id,
+                    start=proposed_start.isoformat(),
+                    end=proposed_end.isoformat(),
+                )
+
+                # Check if the requested exact slot clashes with existing events
+                conflict = self._detect_clash(proposed_start, proposed_end, busy)
+                if conflict:
+                    log_info(
+                        logger,
+                        "schedule_fixed_time_conflict",
+                        request_id=request_id,
+                        conflict=conflict.summary,
+                    )
+                    return ScheduleResult(
+                        scheduled=False,
+                        reason="Exact requested time overlaps with an existing event",
+                        state="needs_clarification",
+                        needs_clarification=True,
+                        clarification_question=f"The time you requested clashes with {conflict.summary}. Shall I find another slot?",
+                        proposed_start=proposed_start.isoformat(),
+                        proposed_end=proposed_end.isoformat(),
+                    )
+            except ValueError:
+                log_warning(
+                    logger,
+                    "schedule_invalid_start_time",
+                    request_id=request_id,
+                    start_time=task.start_time_iso,
+                )
+                # Fallback if AI gave a bad ISO string
+                proposed_start, proposed_end = None, None
+        else:
+            proposed_start, proposed_end = None, None
+
+        if proposed_start is None:
+            # EXISTING LOGIC: Flexible task, find a free slot before the deadline
+            found = self._find_free_slot(
+                now_utc=now_utc,
+                deadline_utc=deadline_utc,
+                duration_minutes=task.estimated_duration_minutes,
+                busy=busy,
+            )
+            if found is None:
+                log_info(logger, "schedule_no_slot", request_id=request_id)
+                return ScheduleResult(
+                    scheduled=False,
+                    reason="No free slot before deadline",
+                    state="no_slot",
+                )
+            proposed_start, proposed_end = found
+
         log_info(
             logger,
-            "schedule_slot_found",
+            "schedule_slot_selected",
             request_id=request_id,
             start=proposed_start.isoformat(),
             end=proposed_end.isoformat(),
         )
+
+        # Final clash detection (redundant for fixed-time but safe, 
+        # and necessary for flexible slots)
         conflict = self._detect_clash(proposed_start, proposed_end, busy)
         if conflict is not None:
             log_info(

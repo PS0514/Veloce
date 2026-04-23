@@ -1,5 +1,6 @@
 import os
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -11,6 +12,7 @@ from veloce.orchestrator.models import (
     ContextIngestRequest,
     ContextRetrieveRequest,
     ContextRetrieveResponse,
+    NormalizedInbound,
     SchedulerInbound,
     SchedulerResponse,
 )
@@ -122,40 +124,63 @@ def telegram_context_retrieve(payload: ContextRetrieveRequest) -> ContextRetriev
 def veloce_task_scheduler(
     payload: SchedulerInbound | list[SchedulerInbound]
 ) -> SchedulerResponse | list[SchedulerResponse]:
+    
+    inbounds = payload if isinstance(payload, list) else [payload]
+    if not inbounds:
+        return []
 
-    def _process_single(item: SchedulerInbound) -> SchedulerResponse:
-        req_id = _request_id(source=item.source, chat_id=item.chat_id, message_id=item.message_id)
-        log_info(
-            logger,
-            "scheduler_inbound_received",
-            request_id=req_id,
-            source=item.source,
-            chat_id=item.chat_id,
-            message_id=item.message_id,
-            sender_id=item.sender_id,
-            has_message=bool((item.message or item.raw_text or "").strip()),
+    # 1. Group messages by chat_id
+    grouped_inbounds = defaultdict(list)
+    for item in inbounds:
+        chat_id = item.chat_id or "unknown_chat"
+        grouped_inbounds[chat_id].append(item)
+
+    all_results: list[SchedulerResponse] = []
+
+    # 2. Process each chat group as a single batch
+    for chat_id, group in grouped_inbounds.items():
+        # Sort chronologically just in case
+        group.sort(key=lambda x: x.date or "")
+        
+        # Combine the text to feed the AI
+        combined_text = "\n".join(
+            [f"[{item.date}] User {item.sender_id}: {item.message or item.raw_text}" for item in group]
+        )
+        
+        # Create a "Merged" inbound representing the whole conversation batch
+        representative_item = group[-1] # Use the latest item for metadata
+        merged_inbound = NormalizedInbound(
+            source=representative_item.source or "telegram_userbot",
+            message_id=representative_item.message_id,
+            sender_id=representative_item.sender_id,
+            chat_id=representative_item.chat_id,
+            chat_title=representative_item.chat_title,
+            inbound_date=representative_item.date or datetime.now(timezone.utc).isoformat(),
+            timezone=representative_item.timezone or DEFAULT_TIMEZONE,
+            raw_text=combined_text,
         )
 
-        try:
-            normalized = services.pipeline.normalize_inbound(item, default_timezone=DEFAULT_TIMEZONE)
-        except ValueError as exc:
-            log_warning(logger, "scheduler_inbound_invalid", request_id=req_id, reason=exc)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
+        req_id = _request_id(
+            source="batch_process", 
+            chat_id=representative_item.chat_id, 
+            message_id=representative_item.message_id
+        )
+        
         log_info(
             logger,
-            "scheduler_inbound_normalized",
+            "scheduler_batch_received",
             request_id=req_id,
-            timezone=normalized.timezone,
-            text_len=len(normalized.raw_text),
+            chat_id=chat_id,
+            batch_size=len(group),
         )
 
+        # Retrieve context once for the whole batch
         context_items = []
-        if normalized.chat_id is not None:
+        if merged_inbound.chat_id is not None:
             retrieval_started = time.perf_counter()
             retrieved = services.context_service.retrieve(
-                chat_id=normalized.chat_id,
-                query=normalized.raw_text.strip().lower(),
+                chat_id=merged_inbound.chat_id,
+                query=combined_text.strip().lower(),
                 limit=8,
                 since=None,
             )
@@ -165,47 +190,43 @@ def veloce_task_scheduler(
                 logger,
                 "scheduler_context_retrieved",
                 request_id=req_id,
-                chat_id=normalized.chat_id,
+                chat_id=merged_inbound.chat_id,
                 items=len(context_items),
                 elapsed_ms=retrieval_elapsed_ms,
             )
-        else:
-            log_info(logger, "scheduler_context_skipped", request_id=req_id, reason="no_chat_id")
 
+        # Run the pipeline for the merged block of text
         pipeline_started = time.perf_counter()
-        result = services.pipeline.run(
-            inbound=normalized,
+        results = services.pipeline.run_multi(
+            inbound=merged_inbound,
             retrieved_context=context_items,
             request_id=req_id,
         )
         pipeline_elapsed_ms = int((time.perf_counter() - pipeline_started) * 1000)
 
-        log_info(
-            logger,
-            "scheduler_completed",
-            request_id=req_id,
-            state=result.state,
-            scheduled=result.scheduled,
-            needs_clarification=result.needs_clarification,
-            elapsed_ms=pipeline_elapsed_ms,
-            reason=result.reason,
-            selected_task=result.selected_task.task_name if result.selected_task else None,
-            selected_deadline=result.selected_task.deadline_iso if result.selected_task else None,
-            selected_confidence=(
-                round(result.selected_task.confidence, 3) if result.selected_task is not None else None
-            ),
-            calendar_event_id=result.calendar_event_id,
-            calendar_link=result.calendar_link,
-            clarification_question=result.clarification_question,
-        )
-        return result
+        for result in results:
+            log_info(
+                logger,
+                "scheduler_completed",
+                request_id=req_id,
+                state=result.state,
+                scheduled=result.scheduled,
+                needs_clarification=result.needs_clarification,
+                elapsed_ms=pipeline_elapsed_ms,
+                reason=result.reason,
+                selected_task=result.selected_task.task_name if result.selected_task else None,
+            )
+            all_results.append(result)
 
-    # Handle batch payloads (List)
-    if isinstance(payload, list):
-        return [_process_single(item) for item in payload]
+    # If the original input was a single object, return a single object (the first result)
+    # if isinstance(payload, SchedulerInbound):
+    #     return all_results[0] if all_results else SchedulerResponse(
+    #         scheduled=False,
+    #         reason="No results generated",
+    #         state="no_results"
+    #     )
 
-    # Handle single payload
-    return _process_single(payload)
+    return all_results
 
 
 app = _create_app()
