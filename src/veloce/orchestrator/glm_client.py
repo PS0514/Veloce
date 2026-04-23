@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from zai import ZaiClient
+from openai import OpenAI
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import ContextItem, GlmExtraction, NormalizedInbound, TaskCandidate
@@ -86,13 +86,19 @@ class _RateLimiter:
 
 class GlmClient:
     def __init__(self) -> None:
-        self.api_key = os.getenv("ZAI_API_KEY", "").strip()
-        self.model = os.getenv("ZAI_MODEL", "glm-4.5").strip() or "glm-4.5"
-        rpm = int(os.getenv("ZAI_RATE_LIMIT_RPM", "10") or "10")
+        self.api_key = os.getenv("ILMU_API_KEY", "").strip()
+        self.model = os.getenv("ILMU_MODEL", "ilmu-glm-5.1").strip() or "ilmu-glm-5.1"
+        rpm = int(os.getenv("ILMU_RATE_LIMIT_RPM", "10") or "10")
+
         self._rate_limiter = _RateLimiter(max_rpm=rpm)
-        self._client: ZaiClient | None = None
+        self._client: OpenAI | None = None
+
         if self.api_key:
-            self._client = ZaiClient(api_key=self.api_key)
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.ilmu.com/v1",
+            )
+        
         log_info(
             logger,
             "glm_client_init",
@@ -114,7 +120,7 @@ class GlmClient:
             tasks=[],
             metadata={
                 "fallback": True,
-                "reason": "ZAI_API_KEY not configured",
+                "reason": "ILMU_API_KEY not configured",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )

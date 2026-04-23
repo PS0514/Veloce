@@ -1,4 +1,4 @@
-zai-sdk
+# zai-sdk
 requests
 telethon
 flask
@@ -6,3 +6,4 @@ fastapi
 uvicorn
 pydantic
 python-dotenv
+openai
