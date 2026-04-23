@@ -1,3 +1,6 @@
+import os
+os.environ["VELOCE_SERVICE_NAME"] = "listener"
+
 from pathlib import Path
 import sys
 

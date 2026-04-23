@@ -98,6 +98,32 @@ def run_listener() -> None:
                 error=exc,
             )
 
+    def post_batch_to_webhook(payloads: list[dict]) -> None:
+        if not config.webhook_url or not payloads:
+            return
+        try:
+            # Increase timeout since the payload is larger and processing may take longer
+            response = requests.post(config.webhook_url, json=payloads, timeout=30)
+            log_info(
+                logger,
+                "listener_batch_webhook_success",
+                batch_size=len(payloads),
+                status=response.status_code,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            log_warning(logger, "listener_batch_webhook_failed", error=exc)
+
+    def post_batch_to_context_ingest(payloads: list[dict]) -> None:
+        if not config.webhook_url or not payloads:
+            return
+        ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
+        try:
+            requests.post(ingest_url, json=payloads, timeout=30)
+            log_info(logger, "listener_batch_context_ingest_success", batch_size=len(payloads))
+        except requests.RequestException as exc:
+            log_warning(logger, "listener_batch_context_ingest_failed", error=exc)
+
     async def is_allowed_chat(event) -> bool:
         if not config.channel_chat_ids and not config.channel_usernames:
             return True
@@ -136,8 +162,9 @@ def run_listener() -> None:
 
         log_info(logger, "listener_startup_history_begin", limit=limit)
 
-        posted_count = 0
         scanned_count = 0
+        context_batch = []
+        webhook_batch = []
 
         async for dialog in client.iter_dialogs():
             if not await is_allowed_dialog(dialog):
@@ -157,26 +184,27 @@ def run_listener() -> None:
                     "message": message.message,
                     "date": message.date.isoformat() if message.date else None,
                 }
-                log_info(
-                    logger,
-                    "listener_startup_history_forward",
-                    chat=dialog.name,
-                    chat_id=dialog.id,
-                    message_id=message.id,
-                    preview=message_preview(message.message),
-                )
-                post_to_context_ingest(payload)
                 
+                # 1. Add to context batch (all messages)
+                context_batch.append(payload)
+                
+                # 2. Add to webhook batch only if it passes the keyword filter
                 if should_forward_text(message.message):
-                    post_to_webhook(payload)
-                    
-                posted_count += 1
+                    webhook_batch.append(payload)
+
+        # 3. Send the compiled batches over the network
+        log_info(logger, "listener_startup_history_sending_batches", 
+                 context_size=len(context_batch), 
+                 webhook_size=len(webhook_batch))
+                 
+        post_batch_to_context_ingest(context_batch)
+        post_batch_to_webhook(webhook_batch)
 
         log_info(
             logger,
             "listener_startup_history_done",
             scanned_messages=scanned_count,
-            forwarded_messages=posted_count,
+            forwarded_messages=len(webhook_batch),
         )
 
     @client.on(events.NewMessage(incoming=True))

@@ -7,3 +7,4 @@ uvicorn
 pydantic
 python-dotenv
 openai
+rich

@@ -10,6 +10,11 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 data/*
+
+# Logs
+data/*.log
+data/*.log.*
+
 veloce_config.json
 *.session
 

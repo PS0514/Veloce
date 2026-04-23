@@ -44,41 +44,46 @@ def health() -> dict[str, str]:
 
 
 @router.post("/telegram-context-ingest")
-def telegram_context_ingest(payload: ContextIngestRequest) -> dict[str, object]:
-    req_id = _request_id(source=payload.source, chat_id=payload.chat_id, message_id=payload.message_id)
-    log_info(
-        logger,
-        "context_ingest_received",
-        request_id=req_id,
-        source=payload.source,
-        chat_id=payload.chat_id,
-        message_id=payload.message_id,
-    )
-    inserted = services.store.ingest_context(
-        ContextRow(
-            chat_id=payload.chat_id,
-            message_id=payload.message_id,
-            sender_id=payload.sender_id,
-            chat_title=payload.chat_title,
-            message=payload.message,
-            source=payload.source,
-            date=payload.date,
+def telegram_context_ingest(
+    payload: ContextIngestRequest | list[ContextIngestRequest]
+) -> dict[str, object] | list[dict[str, object]]:
+
+    def _process_single(item: ContextIngestRequest) -> dict[str, object]:
+        req_id = _request_id(source=item.source, chat_id=item.chat_id, message_id=item.message_id)
+        log_info(
+            logger,
+            "context_ingest_received",
+            request_id=req_id,
+            source=item.source,
+            chat_id=item.chat_id,
+            message_id=item.message_id,
         )
-    )
+        inserted = services.store.ingest_context(
+            ContextRow(
+                chat_id=item.chat_id,
+                message_id=item.message_id,
+                sender_id=item.sender_id,
+                chat_title=item.chat_title,
+                message=item.message,
+                source=item.source,
+                date=item.date,
+            )
+        )
+        log_info(
+            logger,
+            "context_ingest_completed",
+            request_id=req_id,
+            inserted=inserted,
+            deduped=not inserted,
+        )
+        return {"ok": True, "inserted": inserted, "deduped": not inserted}
 
-    log_info(
-        logger,
-        "context_ingest_completed",
-        request_id=req_id,
-        inserted=inserted,
-        deduped=not inserted,
-    )
+    # Handle batch payloads (List)
+    if isinstance(payload, list):
+        return [_process_single(item) for item in payload]
 
-    return {
-        "ok": True,
-        "inserted": inserted,
-        "deduped": not inserted,
-    }
+    # Handle single payload
+    return _process_single(payload)
 
 
 @router.post("/telegram-context-retrieve", response_model=ContextRetrieveResponse)
@@ -113,83 +118,94 @@ def telegram_context_retrieve(payload: ContextRetrieveRequest) -> ContextRetriev
     return response
 
 
-@router.post("/veloce-task-scheduler", response_model=SchedulerResponse)
-def veloce_task_scheduler(payload: SchedulerInbound) -> SchedulerResponse:
-    req_id = _request_id(source=payload.source, chat_id=payload.chat_id, message_id=payload.message_id)
-    log_info(
-        logger,
-        "scheduler_inbound_received",
-        request_id=req_id,
-        source=payload.source,
-        chat_id=payload.chat_id,
-        message_id=payload.message_id,
-        sender_id=payload.sender_id,
-        has_message=bool((payload.message or payload.raw_text or "").strip()),
-    )
+@router.post("/veloce-task-scheduler", response_model=SchedulerResponse | list[SchedulerResponse])
+def veloce_task_scheduler(
+    payload: SchedulerInbound | list[SchedulerInbound]
+) -> SchedulerResponse | list[SchedulerResponse]:
 
-    try:
-        normalized = services.pipeline.normalize_inbound(payload, default_timezone=DEFAULT_TIMEZONE)
-    except ValueError as exc:
-        log_warning(logger, "scheduler_inbound_invalid", request_id=req_id, reason=exc)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    log_info(
-        logger,
-        "scheduler_inbound_normalized",
-        request_id=req_id,
-        timezone=normalized.timezone,
-        text_len=len(normalized.raw_text),
-    )
-
-    context_items = []
-    if normalized.chat_id is not None:
-        retrieval_started = time.perf_counter()
-        retrieved = services.context_service.retrieve(
-            chat_id=normalized.chat_id,
-            query=normalized.raw_text.strip().lower(),
-            limit=8,
-            since=None,
-        )
-        context_items = retrieved.items
-        retrieval_elapsed_ms = int((time.perf_counter() - retrieval_started) * 1000)
+    def _process_single(item: SchedulerInbound) -> SchedulerResponse:
+        req_id = _request_id(source=item.source, chat_id=item.chat_id, message_id=item.message_id)
         log_info(
             logger,
-            "scheduler_context_retrieved",
+            "scheduler_inbound_received",
             request_id=req_id,
-            chat_id=normalized.chat_id,
-            items=len(context_items),
-            elapsed_ms=retrieval_elapsed_ms,
+            source=item.source,
+            chat_id=item.chat_id,
+            message_id=item.message_id,
+            sender_id=item.sender_id,
+            has_message=bool((item.message or item.raw_text or "").strip()),
         )
-    else:
-        log_info(logger, "scheduler_context_skipped", request_id=req_id, reason="no_chat_id")
 
-    pipeline_started = time.perf_counter()
-    result = services.pipeline.run(
-        inbound=normalized,
-        retrieved_context=context_items,
-        request_id=req_id,
-    )
-    pipeline_elapsed_ms = int((time.perf_counter() - pipeline_started) * 1000)
+        try:
+            normalized = services.pipeline.normalize_inbound(item, default_timezone=DEFAULT_TIMEZONE)
+        except ValueError as exc:
+            log_warning(logger, "scheduler_inbound_invalid", request_id=req_id, reason=exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    log_info(
-        logger,
-        "scheduler_completed",
-        request_id=req_id,
-        state=result.state,
-        scheduled=result.scheduled,
-        needs_clarification=result.needs_clarification,
-        elapsed_ms=pipeline_elapsed_ms,
-        reason=result.reason,
-        selected_task=result.selected_task.task_name if result.selected_task else None,
-        selected_deadline=result.selected_task.deadline_iso if result.selected_task else None,
-        selected_confidence=(
-            round(result.selected_task.confidence, 3) if result.selected_task is not None else None
-        ),
-        calendar_event_id=result.calendar_event_id,
-        calendar_link=result.calendar_link,
-        clarification_question=result.clarification_question,
-    )
-    return result
+        log_info(
+            logger,
+            "scheduler_inbound_normalized",
+            request_id=req_id,
+            timezone=normalized.timezone,
+            text_len=len(normalized.raw_text),
+        )
+
+        context_items = []
+        if normalized.chat_id is not None:
+            retrieval_started = time.perf_counter()
+            retrieved = services.context_service.retrieve(
+                chat_id=normalized.chat_id,
+                query=normalized.raw_text.strip().lower(),
+                limit=8,
+                since=None,
+            )
+            context_items = retrieved.items
+            retrieval_elapsed_ms = int((time.perf_counter() - retrieval_started) * 1000)
+            log_info(
+                logger,
+                "scheduler_context_retrieved",
+                request_id=req_id,
+                chat_id=normalized.chat_id,
+                items=len(context_items),
+                elapsed_ms=retrieval_elapsed_ms,
+            )
+        else:
+            log_info(logger, "scheduler_context_skipped", request_id=req_id, reason="no_chat_id")
+
+        pipeline_started = time.perf_counter()
+        result = services.pipeline.run(
+            inbound=normalized,
+            retrieved_context=context_items,
+            request_id=req_id,
+        )
+        pipeline_elapsed_ms = int((time.perf_counter() - pipeline_started) * 1000)
+
+        log_info(
+            logger,
+            "scheduler_completed",
+            request_id=req_id,
+            state=result.state,
+            scheduled=result.scheduled,
+            needs_clarification=result.needs_clarification,
+            elapsed_ms=pipeline_elapsed_ms,
+            reason=result.reason,
+            selected_task=result.selected_task.task_name if result.selected_task else None,
+            selected_deadline=result.selected_task.deadline_iso if result.selected_task else None,
+            selected_confidence=(
+                round(result.selected_task.confidence, 3) if result.selected_task is not None else None
+            ),
+            calendar_event_id=result.calendar_event_id,
+            calendar_link=result.calendar_link,
+            clarification_question=result.clarification_question,
+        )
+        return result
+
+    # Handle batch payloads (List)
+    if isinstance(payload, list):
+        return [_process_single(item) for item in payload]
+
+    # Handle single payload
+    return _process_single(payload)
 
 
 app = _create_app()
