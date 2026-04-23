@@ -88,6 +88,7 @@ class GlmClient:
     def __init__(self) -> None:
         self.api_key = os.getenv("ILMU_API_KEY", "").strip()
         self.model = os.getenv("ILMU_MODEL", "ilmu-glm-5.1").strip() or "ilmu-glm-5.1"
+        self.base_url = os.getenv("ILMU_BASE_URL", "https://api.ilmu.ai/v1").strip() or "https://api.ilmu.ai/v1"
         rpm = int(os.getenv("ILMU_RATE_LIMIT_RPM", "10") or "10")
 
         self._rate_limiter = _RateLimiter(max_rpm=rpm)
@@ -96,7 +97,7 @@ class GlmClient:
         if self.api_key:
             self._client = OpenAI(
                 api_key=self.api_key,
-                base_url="https://api.ilmu.com/v1",
+                base_url=self.base_url,
             )
         
         log_info(

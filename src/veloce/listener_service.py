@@ -58,7 +58,7 @@ def run_listener() -> None:
             log_warning(logger, "listener_webhook_skipped", reason="missing_webhook_url")
             return
         try:
-            response = requests.post(config.webhook_url, json=payload, timeout=10)
+            response = requests.post(config.webhook_url, json=payload, timeout=120)
             body_preview = (response.text or "").replace("\n", " ").strip()
             if len(body_preview) > 200:
                 body_preview = f"{body_preview[:200]}..."
