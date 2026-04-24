@@ -405,6 +405,12 @@
         <strong style="color: var(--ink);">Google Calendar</strong>
       </div>
 
+      <div class="integration-card" hx-get="/tab/notifications" hx-target="#integration-content">
+        <img src="/static/logos/bell.svg" class="integration-icon" alt="Notifications"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>'">
+        <strong style="color: var(--ink);">Notifications</strong>
+      </div>
+
       <div class="integration-card disabled" hx-get="/tab/soon/whatsapp" hx-target="#integration-content">
         <img src="/static/logos/whatsapp.png" class="integration-icon" alt="WhatsApp"
           onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📱</text></svg>'">
@@ -438,7 +444,7 @@
 
     <div class="actions" style="margin-top: 20px; text-align: right; border-top: 1px solid #e6edf6; padding-top: 20px;">
       <button type="button" hx-post="/action/save"
-        hx-include="[name='telegram_channels'], [name='listener_keywords'], [name='google_calendar_id']" hx-swap="none">
+        hx-include="[name='telegram_channels'], [name='listener_keywords'], [name='google_calendar_id'], [name='notification_chat_id'], [name='clarification_mode']" hx-swap="none">
         Save All Settings
       </button>
     </div>

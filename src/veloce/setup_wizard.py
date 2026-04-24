@@ -62,6 +62,9 @@ def current_values() -> dict[str, str | bool]:
         "google_calendar_id": cfg.get("google_calendar_id", _env("GOOGLE_CALENDAR_ID", "primary")),
         "telegram_channels": cfg.get("telegram_channel_filters", _env("TELEGRAM_CHANNEL_FILTERS")),
         "listener_keywords": cfg.get("listener_keywords", _env("LISTENER_KEYWORDS")),
+        "notification_chat_id": cfg.get("notification_chat_id", _env("TELEGRAM_NOTIFICATION_CHAT_ID")),
+        "clarification_mode": cfg.get("clarification_mode", "group"),
+        "telegram_bot_token": _env("TELEGRAM_BOT_TOKEN"),
         # Transient UI state (not persisted)
         "telegram_phone": "",
         "telegram_code": "",
@@ -86,6 +89,8 @@ def save_settings(values: dict[str, str | bool]) -> None:
         "google_access_token": str(values.get("google_access_token", "")),
         "google_refresh_token": str(values.get("google_refresh_token", "")),
         "enable_google_sync": auto_enable,
+        "notification_chat_id": str(values.get("notification_chat_id", "")),
+        "clarification_mode": str(values.get("clarification_mode", "group")),
     })
 
 
@@ -568,6 +573,38 @@ def get_services_status() -> tuple[list[dict[str, str]], str]:
     except Exception as exc:
         return [], f"Service status unavailable: {exc}"
 
+@APP.route("/action/services", methods=["POST"])
+def action_services():
+    action = request.form.get("action", "").strip()
+    success = ""
+    error = ""
+    
+    try:
+        if action == "start":
+            start_docker_stack()
+            success = "Docker services started successfully."
+        elif action == "stop":
+            stop_docker_stack()
+            success = "Docker services stopped successfully."
+        elif action == "restart":
+            restart_docker_stack()
+            success = "Docker services restarted successfully."
+        else:
+            # Fallback if the frontend doesn't specify an action parameter
+            start_docker_stack()
+            success = "Docker services started."
+    except Exception as exc:
+        error = f"Service action failed: {exc}"
+    
+    # Fetch the updated status to refresh the UI
+    service_statuses, services_summary = get_services_status()
+    return render_template(
+        "partials/service_list_response.html",
+        service_statuses=service_statuses,
+        services_summary=services_summary,
+        success=success,
+        error=error
+    )
 
 # ---------------------------------------------------------------------------
 # Render helper
@@ -624,6 +661,12 @@ def action_save():
         values["listener_keywords"] = request.form["listener_keywords"].strip()
     if "google_calendar_id" in request.form:
         values["google_calendar_id"] = request.form["google_calendar_id"].strip() or "primary"
+    
+    # Notifications tab fields
+    if "notification_chat_id" in request.form:
+        values["notification_chat_id"] = request.form["notification_chat_id"].strip()
+    if "clarification_mode" in request.form:
+        values["clarification_mode"] = request.form["clarification_mode"].strip()
         
     try:
         save_settings(values)
@@ -881,6 +924,102 @@ def tab_google():
         values=values, 
         is_google_authed=is_google_authed, 
         google_info=google_info
+    )
+
+
+def get_my_telegram_id() -> str | None:
+    """Get the authenticated user's own Telegram ID."""
+    if not is_telegram_authenticated():
+        return None
+    try:
+        config = load_listener_config()
+        # Use credentials from .env
+        api_id = _env("TELEGRAM_API_ID")
+        api_hash = _env("TELEGRAM_API_HASH")
+        if not api_id or not api_hash:
+            return None
+            
+        client = TelegramClient(config.session_path, api_id, api_hash)
+        client.connect()
+        try:
+            me = client.get_me()
+            return str(me.id) if me else None
+        finally:
+            client.disconnect()
+    except Exception:
+        return None
+
+
+def get_bot_info(token: str) -> dict | None:
+    """Fetch bot details from Telegram API using the token."""
+    if not token:
+        return None
+    try:
+        resp = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+        if resp.status_code == 200:
+            return resp.json().get("result")
+    except Exception as e:
+        log_warning(logger, "bot_get_me_failed", error=str(e))
+    return None
+
+
+def test_bot_communication(token: str, chat_id: str) -> bool:
+    """Test if the bot can reach the target chat without sending an actual message."""
+    if not token or not chat_id:
+        return False
+    try:
+        # Using sendChatAction ('typing') is a non-intrusive way to check bot access privileges
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendChatAction",
+            json={"chat_id": chat_id, "action": "typing"},
+            timeout=5
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+@APP.route("/tab/notifications", methods=["GET"])
+def tab_notifications():
+    values = current_values()
+    dialogs = []
+    my_user_id = None
+    
+    bot_token = values.get("telegram_bot_token")
+    bot_username = None
+    bot_can_communicate = True
+    bot_setup_needed = False
+
+    if bot_token:
+        bot_info = get_bot_info(bot_token)
+        if bot_info:
+            bot_username = bot_info.get("username")
+        
+        chat_id = values.get("notification_chat_id")
+        if chat_id:
+            bot_can_communicate = test_bot_communication(bot_token, chat_id)
+            if not bot_can_communicate:
+                bot_setup_needed = True
+        else:
+            bot_setup_needed = True
+            
+    if is_telegram_authenticated():
+        try:
+            # Reuse existing list_user_channels helper
+            dialogs = list_user_channels()
+            my_user_id = get_my_telegram_id()
+        except Exception as exc:
+            log_warning(logger, "setup_notifications_fetch_failed", error=str(exc))
+            
+    return render_template(
+        "partials/tab_notifications.html",
+        values=values,
+        dialogs=dialogs,
+        my_user_id=my_user_id,
+        bot_token_exists=bool(bot_token),
+        bot_username=bot_username,
+        bot_can_communicate=bot_can_communicate,
+        bot_setup_needed=bot_setup_needed
     )
 
 

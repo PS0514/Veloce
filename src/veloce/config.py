@@ -17,6 +17,9 @@ class ListenerConfig:
     orchestrator_url: str | None
     db_path: str | None
     session_path: str
+    bot_token: str | None
+    notification_chat_id: str | None
+    clarification_mode: str
 
 
 def parse_channel_filters(raw_filters: str) -> tuple[Set[int], Set[str]]:
@@ -65,6 +68,10 @@ def load_listener_config() -> ListenerConfig:
     os.makedirs(data_dir, exist_ok=True)
     session_path = os.path.join(data_dir, "telegram_session")
 
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    notification_chat_id = get_config_value("notification_chat_id") or os.getenv("TELEGRAM_NOTIFICATION_CHAT_ID")
+    clarification_mode = get_config_value("clarification_mode", "group")
+
     return ListenerConfig(
         api_id=os.getenv("TELEGRAM_API_ID"),
         api_hash=os.getenv("TELEGRAM_API_HASH"),
@@ -76,4 +83,7 @@ def load_listener_config() -> ListenerConfig:
         orchestrator_url=orchestrator_url,
         db_path=db_path,
         session_path=session_path,
+        bot_token=bot_token,
+        notification_chat_id=notification_chat_id,
+        clarification_mode=clarification_mode,
     )

@@ -1,0 +1,109 @@
+<div id="notifications-tab-wrapper" class="fade-in">
+  <div class="section">
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">Notifications & Bot Settings</h2>
+        <p class="section-sub">Configure how Veloce communicates with you for clarifications.</p>
+      </div>
+    </div>
+
+    {% if not bot_token_exists %}
+    <div class="warn" style="margin-top: 16px;">
+      <strong>Missing TELEGRAM_BOT_TOKEN</strong><br>
+      You haven't configured a Telegram Bot token in your <code>.env</code> file. 
+      The Private Direct Message feature is disabled. 
+      Please add <code>TELEGRAM_BOT_TOKEN=your_token_here</code> to your <code>.env</code> file and restart the setup wizard.
+    </div>
+    {% elif bot_setup_needed %}
+    <div class="info" style="margin-top: 16px; font-size: 0.9rem;">
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <span style="font-size: 1.2rem;">ℹ️</span>
+        <div>
+          <strong style="display: block; margin-bottom: 4px;">Bot Communication Test Failed (Or Not Set)</strong>
+          The bot cannot reach the selected chat. Bots cannot initiate messages due to anti-spam rules.
+          <ul style="margin: 4px 0 0 18px; padding: 0; list-style-type: disc;">
+            <li>
+                <strong>For DMs:</strong> 
+                {% if bot_username %}
+                <a href="https://t.me/{{ bot_username }}" target="_blank" style="color: #118ab2; font-weight: bold;">Click here to start a chat with @{{ bot_username }}</a>.
+                {% else %}
+                Search for your bot on Telegram and click <strong>"Start"</strong>.
+                {% endif %}
+            </li>
+            <li>
+                <strong>For Groups:</strong> 
+                {% if bot_username %}
+                <a href="https://t.me/{{ bot_username }}?startgroup=true" target="_blank" style="color: #118ab2; font-weight: bold;">Click here to add @{{ bot_username }} to your group</a>.
+                {% else %}
+                Manually add your bot to the group.
+                {% endif %}
+            </li>
+          </ul>
+          
+          <div style="margin-top: 12px;">
+            <button type="button" 
+                    hx-get="/tab/notifications" 
+                    hx-target="#notifications-tab-wrapper" 
+                    hx-swap="outerHTML" 
+                    style="padding: 6px 12px; font-size: 0.85rem; cursor: pointer;">
+              🔄 Refresh Status
+            </button>
+            <span class="muted" style="margin-left: 8px; font-size: 0.8rem;">Click after you have authorised the bot.</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    {% elif bot_token_exists and bot_can_communicate and values.notification_chat_id %}
+    <div class="ok" style="margin-top: 16px;">
+      ✅ Bot communication test successful! The bot is fully authorised to reach the selected destination.
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+      <label>Clarification Mode</label>
+      <select name="clarification_mode">
+        <option value="dm" {% if values.clarification_mode == 'dm' or not values.clarification_mode %}selected{% endif %} {% if not bot_token_exists %}disabled{% endif %}>
+          Private Direct Message (Via Notifier Bot) {% if not bot_token_exists %}(Requires Bot Token){% endif %}
+        </option>
+        <option value="group" {% if values.clarification_mode == 'group' %}selected{% endif %}>
+          Direct Reply in Group Chat (As You)
+        </option>
+      </select>
+      <p class="muted" style="margin-top: 4px; font-size: 0.85rem;">
+        Choose where the AI should ask for missing details (like time or date).
+      </p>
+    </div>
+
+    <div style="margin-top: 20px;">
+      <label>Notification Chat Destination</label>
+      <select name="notification_chat_id">
+        {% if my_user_id %}
+          <option value="{{ my_user_id }}" {% if values.notification_chat_id == my_user_id %}selected{% endif %}>
+            👤 My Direct Messages (Recommended)
+          </option>
+        {% endif %}
+        
+        {% if dialogs %}
+          <option disabled>────────── Recent Chats ──────────</option>
+          {% for dialog in dialogs %}
+            <option value="{{ dialog.value }}" {% if values.notification_chat_id == dialog.value %}selected{% endif %}>
+              🗣️ {{ dialog.label }}
+            </option>
+          {% endfor %}
+        {% else %}
+          <option disabled>No recent chats found. Authenticate Telegram first.</option>
+        {% endif %}
+      </select>
+      <p class="muted" style="margin-top: 4px; font-size: 0.85rem;">
+        Select where the Notifier Bot should send its alerts and questions.
+      </p>
+    </div>
+
+    <div style="margin-top: 24px; text-align: right;">
+        <button type="button" hx-post="/action/save" hx-include="[name='notification_chat_id'], [name='clarification_mode']" hx-swap="none">
+            Save Notification Settings
+        </button>
+    </div>
+  </div>
+</div>

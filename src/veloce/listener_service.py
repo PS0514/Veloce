@@ -1,5 +1,8 @@
+import aiohttp
+import asyncio
 import requests
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from telethon import events
 from telethon.sync import TelegramClient
@@ -53,78 +56,90 @@ def run_listener() -> None:
         text = raw_text.replace("\n", " ").strip()
         return text if len(text) <= limit else f"{text[:limit]}..."
 
-    def post_to_webhook(payload: dict) -> None:
+    async def send_bot_notification(token: str, chat_id: str, text: str) -> dict:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status != 200:
+                        log_warning(logger, "bot_notification_failed", status=response.status, response=await response.text())
+                    return await response.json()
+        except Exception as exc:
+            log_warning(logger, "bot_notification_error", error=str(exc))
+            return {}
+
+    async def post_to_webhook_async(payload: dict) -> list[dict]:
         if not config.webhook_url:
             log_warning(logger, "listener_webhook_skipped", reason="missing_webhook_url")
-            return
+            return []
+        
         try:
-            response = requests.post(config.webhook_url, json=payload, timeout=120)
-            body_preview = (response.text or "").replace("\n", " ").strip()
-            if len(body_preview) > 200:
-                body_preview = f"{body_preview[:200]}..."
-            log_info(
-                logger,
-                "listener_webhook_response",
-                source=payload.get("source"),
-                chat_id=payload.get("chat_id"),
-                message_id=payload.get("message_id"),
-                status=response.status_code,
-                body_preview=body_preview,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            log_warning(
-                logger,
-                "listener_webhook_failed",
-                source=payload.get("source"),
-                chat_id=payload.get("chat_id"),
-                message_id=payload.get("message_id"),
-                error=exc,
-            )
+            async with aiohttp.ClientSession() as session:
+                async with session.post(config.webhook_url, json=payload, timeout=120) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    # Orchestrator might return a list or a single dict
+                    return data if isinstance(data, list) else [data]
+        except Exception as exc:
+            log_warning(logger, "listener_webhook_failed", error=str(exc))
+            return []
 
-    def post_to_context_ingest(payload: dict) -> None:
+    async def post_to_context_ingest_async(payload: dict) -> None:
         if not config.webhook_url:
             return
         ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
         try:
-            requests.post(ingest_url, json=payload, timeout=10)
-        except requests.RequestException as exc:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(ingest_url, json=payload, timeout=10) as response:
+                    response.raise_for_status()
+        except Exception as exc:
             log_warning(
                 logger,
                 "listener_context_ingest_failed",
                 source=payload.get("source"),
                 chat_id=payload.get("chat_id"),
                 message_id=payload.get("message_id"),
-                error=exc,
+                error=str(exc),
             )
 
-    def post_batch_to_webhook(payloads: list[dict]) -> None:
+    async def post_batch_to_webhook_async(payloads: list[dict]) -> None:
         if not config.webhook_url or not payloads:
             return
         try:
-            # Increase timeout since the payload is larger and processing may take longer
-            response = requests.post(config.webhook_url, json=payloads, timeout=30)
-            log_info(
-                logger,
-                "listener_batch_webhook_success",
-                batch_size=len(payloads),
-                status=response.status_code,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            log_warning(logger, "listener_batch_webhook_failed", error=exc)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(config.webhook_url, json=payloads, timeout=60) as response:
+                    log_info(
+                        logger,
+                        "listener_batch_webhook_success",
+                        batch_size=len(payloads),
+                        status=response.status,
+                    )
+                    response.raise_for_status()
+        except Exception as exc:
+            log_warning(logger, "listener_batch_webhook_failed", error=str(exc))
 
-    def post_batch_to_context_ingest(payloads: list[dict]) -> None:
+    async def post_batch_to_context_ingest_async(payloads: list[dict]) -> None:
         if not config.webhook_url or not payloads:
             return
         ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
         try:
-            requests.post(ingest_url, json=payloads, timeout=30)
-            log_info(logger, "listener_batch_context_ingest_success", batch_size=len(payloads))
-        except requests.RequestException as exc:
-            log_warning(logger, "listener_batch_context_ingest_failed", error=exc)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(ingest_url, json=payloads, timeout=60) as response:
+                    log_info(logger, "listener_batch_context_ingest_success", batch_size=len(payloads))
+                    response.raise_for_status()
+        except Exception as exc:
+            log_warning(logger, "listener_batch_context_ingest_failed", error=str(exc))
 
     async def is_allowed_chat(event) -> bool:
+        # Always allow the notification chat so we can capture replies to the bot
+        if config.notification_chat_id and str(event.chat_id) == str(config.notification_chat_id):
+            return True
+
         if not config.channel_chat_ids and not config.channel_usernames:
             return True
 
@@ -140,6 +155,10 @@ def run_listener() -> None:
         return False
 
     async def is_allowed_dialog(dialog) -> bool:
+        # Always allow the notification chat
+        if config.notification_chat_id and str(dialog.id) == str(config.notification_chat_id):
+            return True
+
         if not config.channel_chat_ids and not config.channel_usernames:
             return True
 
@@ -197,8 +216,8 @@ def run_listener() -> None:
                  context_size=len(context_batch), 
                  webhook_size=len(webhook_batch))
                  
-        post_batch_to_context_ingest(context_batch)
-        post_batch_to_webhook(webhook_batch)
+        await post_batch_to_context_ingest_async(context_batch)
+        await post_batch_to_webhook_async(webhook_batch)
 
         log_info(
             logger,
@@ -207,10 +226,9 @@ def run_listener() -> None:
             forwarded_messages=len(webhook_batch),
         )
 
-    @client.on(events.NewMessage(incoming=True))
+    @client.on(events.NewMessage())
     async def handler(event):
         if not await is_allowed_chat(event):
-            log_info(logger, "listener_message_skipped", reason="chat_not_allowed", chat_id=event.chat_id)
             return
 
         chat = await event.get_chat()
@@ -225,7 +243,9 @@ def run_listener() -> None:
             "message": event.raw_text,
             "date": event.date.isoformat() if event.date else None,
         }
-        post_to_context_ingest(payload)
+        
+        # 1. Ingest context synchronously (using async version for safety in async loop)
+        await post_to_context_ingest_async(payload)
 
         if should_forward_text(event.raw_text):
             log_info(
@@ -237,15 +257,68 @@ def run_listener() -> None:
                 sender_id=event.sender_id,
                 preview=message_preview(event.raw_text),
             )
-            post_to_webhook(payload)
-        else:
-            log_info(
-                logger,
-                "listener_message_skipped",
-                reason="keyword_filter_miss",
-                chat_id=event.chat_id,
-                message_id=event.id,
-            )
+            # 2. Send to orchestrator and await the results
+            results = await post_to_webhook_async(payload)
+            
+            for result in results:
+                # 3. Check if clarification is needed
+                if result.get("needs_clarification"):
+                    question = result.get("clarification_question", "Can you provide more details?")
+                    
+                    if config.clarification_mode == "dm":
+                        # -----------------------------------------------------
+                        # MODE 1: SEND VIA PRIVATE DM (BOTFATHER)
+                        # -----------------------------------------------------
+                        if config.bot_token and config.notification_chat_id:
+                            task_name = result.get("selected_task", {}).get("task_name", "a task")
+                            safe_title = chat_title or "a chat"
+                            msg_text = f"🚨 **Clarification needed from {safe_title}**\nTask: _{task_name}_\n\n❓ {question}"
+                            
+                            bot_resp = await send_bot_notification(config.bot_token, config.notification_chat_id, msg_text)
+                            
+                            # Ingest the BOT's question into context
+                            bot_msg_id = bot_resp.get("result", {}).get("message_id", 0)
+                            bot_context_payload = {
+                                "source": "botfather_notification",
+                                "message_id": bot_msg_id,
+                                "sender_id": 0, # Representing the bot
+                                "chat_id": int(config.notification_chat_id),
+                                "chat_title": "Veloce Notifier",
+                                "message": msg_text,
+                                "date": datetime.now(timezone.utc).isoformat(),
+                            }
+                            await post_to_context_ingest_async(bot_context_payload)
+                        else:
+                            log_warning(logger, "clarification_dm_missing_config", reason="Clarification mode set to DM, but missing bot_token or notification_chat_id in config.")
+                    else:
+                        # -----------------------------------------------------
+                        # MODE 2: DIRECT REPLY IN THE SAME GROUP CHAT
+                        # -----------------------------------------------------
+                        bot_reply = await event.reply(question)
+                        
+                        # Ingest the bot's reply into the group chat's context
+                        bot_context_payload = {
+                            "source": "telegram_userbot_reply",
+                            "message_id": bot_reply.id,
+                            "sender_id": bot_reply.sender_id,
+                            "chat_id": event.chat_id,
+                            "chat_title": chat_title,
+                            "message": question,
+                            "date": bot_reply.date.isoformat() if bot_reply.date else datetime.now(timezone.utc).isoformat(),
+                        }
+                        await post_to_context_ingest_async(bot_context_payload)
+
+                # 5. Optional: Notify on success
+                elif result.get("scheduled"):
+                    task_name = result.get("selected_task", {}).get("task_name", "Task")
+                    if config.clarification_mode == "dm" and config.bot_token and config.notification_chat_id:
+                        await send_bot_notification(
+                            config.bot_token, 
+                            config.notification_chat_id, 
+                            f"✅ Successfully scheduled: **{task_name}**"
+                        )
+                    else:
+                        await event.reply(f"✅ Successfully scheduled: **{task_name}**")
 
     log_info(logger, "listener_connected_waiting_messages")
     try:

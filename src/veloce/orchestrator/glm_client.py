@@ -5,7 +5,6 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from anyio import Path
 from openai import OpenAI
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
