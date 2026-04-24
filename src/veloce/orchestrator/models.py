@@ -86,3 +86,25 @@ class SchedulerResponse(BaseModel):
     needs_clarification: bool = False
     clarification_question: str | None = None
     state: str
+
+
+class ManualCalendarAddRequest(BaseModel):
+    source: str = "manual_selection"
+    message: str | None = None
+    raw_text: str | None = None
+    date: str | None = None
+    timezone: str | None = None
+
+
+class ManualCalendarAddResponse(BaseModel):
+    ok: bool = True
+    scheduled: bool
+    status: str
+    message: str
+    state: str
+    ai_used: bool = False
+    calendar_event_id: str | None = None
+    calendar_link: str | None = None
+    title: str | None = None
+    date: str | None = None
+    time: str | None = None
