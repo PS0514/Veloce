@@ -1,9 +1,11 @@
 import json
 import os
+from pathlib import Path
 import threading
 import time
 from datetime import datetime, timezone
 
+from anyio import Path
 from openai import OpenAI
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
@@ -143,42 +145,35 @@ class GlmClient:
             return self._fallback_extraction(inbound, request_id=request_id)
 
         now = inbound.inbound_date
-        system_prompt = "\n".join(
-            [
-                "You are Veloce extraction engine.",
-                "Return ONLY valid JSON with this exact shape:",
-                '{"tasks":[{"task_name":"string","start_time_iso":"ISO-8601 or null","deadline_iso":"ISO-8601 string","estimated_duration_minutes":90,"confidence":0.0,"needs_clarification":false,"clarification_question":null}]}',
-                "Rules:",
-                "1) Extract academic/professional tasks and deadlines.",
-                "2) If the user specifies an exact start time for a meeting/event, populate 'start_time_iso'. If it is a flexible task, leave 'start_time_iso' as null.",
-                "3) deadline_iso must be timezone-aware ISO-8601.",
-                "4) estimated_duration_minutes must be integer >= 15.",
-                "5) If uncertain, still output best estimate and set needs_clarification=true.",
-            ]
-        )
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        system_prompt_path = base_dir / "glm" / "prompt" /"system_prompt.txt"
+        user_prompt_path = base_dir / "glm" / "prompt" / "user_prompt.txt"
         
-        context_lines = []
+        try:
+            system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
+            user_prompt_template = user_prompt_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as e:
+            log_warning(logger, "missing_prompt_file", error=str(e))
+            # Fallback if the text files are accidentally deleted
+            return self._fallback_extraction(inbound, request_id=request_id)
+        
+        context_str = ""
         if retrieved_context:
-            context_lines.append("Recent Context History:")
+            context_lines = ["Recent Context History:"]
             sorted_context = sorted(retrieved_context, key=lambda x: x.date if x.date else "")
             for item in sorted_context:
                 sender = f"User {item.sender_id}" if item.sender_id else "User"
                 date_str = item.date or "Unknown time"
-                context_lines.append(f"[{date_str}] {sender}: {item.message}")
-            context_lines.append("---")
+                context_lines.append(f"- [{date_str}] {sender}: {item.message}")
+            context_lines.append("---") 
+            context_str = "\n".join(context_lines)
 
-        user_prompt_lines = [
-            f"Current time: {now}",
-            f"Timezone: {inbound.timezone}",
-        ]
-        if context_lines:
-            user_prompt_lines.extend(context_lines)
-            
-        user_prompt_lines.extend([
-            "Input text:",
-            inbound.raw_text,
-        ])
-        user_prompt = "\n".join(user_prompt_lines)
+        user_prompt = user_prompt_template.format(
+            now=now,
+            timezone=inbound.timezone,
+            context_history=context_str,
+            raw_text=inbound.raw_text
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
