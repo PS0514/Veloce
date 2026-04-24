@@ -55,7 +55,7 @@ def current_values() -> dict[str, str | bool]:
         "telegram_api_hash": _env("TELEGRAM_API_HASH"),
         "google_client_id": _env("GOOGLE_CLIENT_ID"),
         "google_client_secret": _env("GOOGLE_CLIENT_SECRET"),
-        "enable_google_sync": _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true",
+        "enable_google_sync": cfg.get("enable_google_sync", _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true"),
         # Mutable from config file (editable via UI)
         "google_access_token": cfg.get("google_access_token", ""),
         "google_refresh_token": cfg.get("google_refresh_token", ""),
@@ -160,8 +160,6 @@ def google_oauth_callback():
 
     access_token = str(payload.get("access_token", "")).strip()
     refresh_token = str(payload.get("refresh_token", "")).strip()
-    token_type = str(payload.get("token_type", "")).strip()
-    expires_in = str(payload.get("expires_in", "")).strip()
     if not access_token:
         raise RuntimeError("Google OAuth token exchange did not return an access token.")
 
@@ -172,16 +170,11 @@ def google_oauth_callback():
     })
     session.pop("google_oauth_state", None)
 
-    message_bits = ["Google login completed successfully."]
-    if token_type:
-        message_bits.append(f"Token type: {token_type}")
-    if expires_in:
-        message_bits.append(f"Expires in: {expires_in} seconds")
-
-    return _render(
-        success=" ".join(message_bits),
-        google_info="You can now list calendars from the authenticated account.",
-    )
+    # Store a success message in the session to survive the redirect
+    session["ui_notif"] = "Google login completed successfully!"
+    
+    # Redirect cleanly back to the home page, specifically opening the Google tab
+    return redirect("/?tab=google")
 
 
 def _get_fresh_google_token() -> str:
@@ -471,9 +464,6 @@ def try_auto_load_channels() -> tuple[list[dict[str, str]], str]:
 
 
 def try_auto_load_google_calendars() -> tuple[list[dict[str, str]], str]:
-    if not _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true":
-        return [], ""
-
     try:
         calendars = list_google_calendars()
         if not calendars:
@@ -484,14 +474,8 @@ def try_auto_load_google_calendars() -> tuple[list[dict[str, str]], str]:
 
 
 def get_google_connection_status(values: dict[str, str | bool]) -> tuple[bool, str]:
-    if not bool(values.get("enable_google_sync")):
-        return False, "Google sync is disabled in setup."
-
     try:
         calendars = list_google_calendars()
-        count = len(calendars)
-        if count > 0:
-            return True, f"Connected ({count} calendar(s) available)."
         return True, "Connected."
     except Exception as exc:
         return False, f"Not connected: {exc}"
@@ -591,176 +575,335 @@ def get_services_status() -> tuple[list[dict[str, str]], str]:
 
 def _render(*, success="", error="", info="", google_info="",
             channels=None, google_calendars=None,
-            telegram_info=None, telegram_login_state=None,
-            service_statuses=None, services_summary=""):
+            telegram_login_state=None,
+            service_statuses=None, services_summary="", active_tab=""):
     """Shorthand to render the wizard template with all required variables."""
-    if channels is None:
-        channels = []
-    if google_calendars is None:
-        google_calendars = []
-    if service_statuses is None:
-        service_statuses = []
+    values = current_values()
+    
+    # Calculate auth states
+    is_google_authed, google_status = get_google_connection_status(values)
+    is_telegram_authed, telegram_user = get_telegram_user_info(
+        str(values.get("telegram_api_id", "")).strip(),
+        str(values.get("telegram_api_hash", "")).strip(),
+    )
+
     if telegram_login_state is None:
-        telegram_login_state = {}
-    if telegram_info is None:
-        telegram_info = "Telegram not logged in. Click Sign in with Telegram."
+        telegram_login_state = get_telegram_login_state()
 
     return render_template(
         "setup_wizard.html",
-        values=current_values(),
-        channels=channels,
-        google_calendars=google_calendars,
+        values=values,
+        is_telegram_authed=is_telegram_authed,
+        telegram_user=telegram_user,
+        is_google_authed=is_google_authed,
+        google_status=google_status,
+        channels=channels or [],
+        google_calendars=google_calendars or [],
         success=success,
         error=error,
         info=info,
-        telegram_info=telegram_info,
         telegram_login_state=telegram_login_state,
         google_info=google_info,
+        service_statuses=service_statuses or [],
+        services_summary=services_summary,
+        active_tab=active_tab  # <-- Make sure this is passed to the template
+    )
+
+# ---------------------------------------------------------------------------
+# HTMX Actions
+# ---------------------------------------------------------------------------
+
+@APP.route("/action/save", methods=["POST"])
+def action_save():
+    values = current_values()
+    
+    # Only update values if they are present in the current active tab
+    if "telegram_channels" in request.form:
+        values["telegram_channels"] = request.form["telegram_channels"].strip()
+    if "listener_keywords" in request.form:
+        values["listener_keywords"] = request.form["listener_keywords"].strip()
+    if "google_calendar_id" in request.form:
+        values["google_calendar_id"] = request.form["google_calendar_id"].strip() or "primary"
+        
+    try:
+        save_settings(values)
+        success = "Settings saved to config file."
+        error = ""
+    except Exception as exc:
+        success = ""
+        error = f"Save failed: {exc}"
+    
+    # Use the OOB template so the toast notification actually appears
+    return render_template("partials/notifications_oob.html", success=success, error=error)
+
+
+@APP.route("/action/telegram-login", methods=["POST"])
+def action_telegram_login():
+    phone = request.form.get("telegram_phone", "").strip()
+    try:
+        if not phone:
+            raise RuntimeError("Telegram phone number is required (example: +60123456789).")
+        info = start_telegram_web_login(phone)
+        error = ""
+    except Exception as exc:
+        info = ""
+        error = f"Login failed: {exc}"
+    
+    values = current_values()
+    is_telegram_authed, telegram_user = get_telegram_user_info()
+    telegram_login_state = get_telegram_login_state()
+
+    html = render_template(
+        "partials/telegram_section.html",
+        values=values,
+        is_telegram_authed=is_telegram_authed,
+        telegram_user=telegram_user,
+        telegram_login_state=telegram_login_state,
+    )
+    
+    notification_type = "error" if error else "info"
+    html += render_template(
+        "partials/notifications_oob.html", 
+        **{notification_type: error or info}
+    )
+    return html
+
+
+@APP.route("/action/telegram-verify", methods=["POST"])
+def action_telegram_verify():
+    code = request.form.get("telegram_code", "").strip()
+    password = request.form.get("telegram_password", "").strip()
+    try:
+        success_login, message = complete_telegram_web_login(code, password)
+    except Exception as exc:
+        success_login = False
+        message = f"Verification failed: {exc}"
+
+    values = current_values()
+    is_telegram_authed, telegram_user = get_telegram_user_info()
+    telegram_login_state = get_telegram_login_state()
+
+    html = render_template(
+        "partials/telegram_section.html",
+        values=values,
+        is_telegram_authed=is_telegram_authed,
+        telegram_user=telegram_user,
+        telegram_login_state=telegram_login_state,
+    )
+    
+    if is_telegram_authed:
+        html += render_template(
+            "partials/telegram_config_section.html", 
+            values=values,
+            is_telegram_authed=is_telegram_authed
+        )
+        
+    notification_type = "success" if success_login else "error"
+    html += render_template(
+        "partials/notifications_oob.html", 
+        **{notification_type: message}
+    )
+
+    return html
+
+
+@APP.route("/action/telegram-cancel", methods=["POST"])
+def action_telegram_cancel():
+    clear_telegram_login_state()
+    values = current_values()
+    is_telegram_authed, telegram_user = get_telegram_user_info()
+    
+    html = render_template(
+        "partials/telegram_section.html",
+        values=values,
+        is_telegram_authed=is_telegram_authed,
+        telegram_user=telegram_user,
+        telegram_login_state={},
+    )
+    html += render_template(
+        "partials/notifications_oob.html", 
+        info="Telegram login flow cancelled."
+    )
+    return html
+
+
+@APP.route("/action/list-channels", methods=["POST"])
+def action_list_channels():
+    try:
+        channels = list_user_channels()
+        success = f"Loaded {len(channels)} channels/chats from Telegram."
+        error = ""
+    except Exception as exc:
+        channels = []
+        success = ""
+        error = f"Failed to list channels: {exc}"
+    
+    return render_template(
+        "partials/channel_list_response.html",
+        channels=channels,
+        success=success,
+        error=error
+    )
+
+
+@APP.route("/action/list-calendars", methods=["POST"])
+def action_list_calendars():
+    try:
+        google_calendars = list_google_calendars()
+        success = f"Loaded {len(google_calendars)} Google calendars."
+        error = ""
+    except Exception as exc:
+        google_calendars = []
+        success = ""
+        error = f"Failed to list calendars: {exc}"
+    
+    return render_template(
+        "partials/calendar_list_response.html",
+        google_calendars=google_calendars,
+        values=current_values(),
+        success=success,
+        error=error
+    )
+
+
+@APP.route("/action/save-restart", methods=["POST"])
+def action_save_restart():
+    values = current_values()
+    values.update({
+        "telegram_channels": request.form.get("telegram_channels", "").strip(),
+        "listener_keywords": request.form.get("listener_keywords", "").strip(),
+        "google_calendar_id": request.form.get("google_calendar_id", "primary").strip() or "primary",
+    })
+    success = ""
+    error = ""
+    try:
+        save_settings(values)
+        restart_docker_stack()
+        success = "Settings saved and Docker services restarted."
+    except Exception as exc:
+        error = f"Save and restart failed: {exc}"
+    
+    service_statuses, services_summary = get_services_status()
+    return render_template(
+        "partials/service_list_response.html",
         service_statuses=service_statuses,
         services_summary=services_summary,
+        success=success,
+        error=error
     )
+
+
+@APP.route("/action/telegram-logout", methods=["POST"])
+def action_telegram_logout():
+    clear_telegram_login_state()
+    config = load_listener_config()
+    session_file = Path(f"{config.session_path}.session")
+    if session_file.exists():
+        session_file.unlink() # Delete the session file
+        
+    values = current_values()
+    return render_template(
+        "partials/tab_telegram.html",
+        values=values,
+        is_telegram_authed=False,
+        telegram_user="",
+        telegram_login_state={}
+    ) + render_template("partials/notifications_oob.html", info="Logged out of Telegram.")
+
+
+@APP.route("/action/google-logout", methods=["POST"])
+def action_google_logout():
+    # Clear tokens from config
+    merge_config_values({
+        "google_access_token": "",
+        "google_refresh_token": "",
+    })
+    
+    values = current_values()
+    return render_template(
+        "partials/tab_google.html",
+        values=values,
+        is_google_authed=False,
+        google_info=""
+    ) + render_template("partials/notifications_oob.html", info="Logged out of Google.")
 
 
 # ---------------------------------------------------------------------------
 # Main route
 # ---------------------------------------------------------------------------
 
-@APP.route("/", methods=["GET", "POST"])
+@APP.route("/", methods=["GET"])
 def index():
     values = current_values()
-    channels: list[dict[str, str]] = []
-    google_calendars: list[dict[str, str]] = []
-    success = ""
-    error = ""
-    info = ""
-    telegram_info = "Telegram not logged in. Click Sign in with Telegram."
+    
+    channels, info = try_auto_load_channels()
+    google_calendars, google_info = try_auto_load_google_calendars()
     service_statuses, services_summary = get_services_status()
-    google_info = ""
-    telegram_flow_info = ""
     telegram_login_state = get_telegram_login_state()
 
-    # Check Telegram auth status
-    is_telegram_authed, telegram_user = get_telegram_user_info(
-        str(values.get("telegram_api_id", "")).strip(),
-        str(values.get("telegram_api_hash", "")).strip(),
-    )
-    if is_telegram_authed:
-        telegram_info = f"✓ Logged in as {telegram_user}"
-    
-    if request.method == "POST":
-        action = request.form.get("action", "save")
-        log_info(logger, "setup_action_received", action=action)
+    # Check for messages passed from the OAuth redirect
+    success_msg = session.pop("ui_notif", "")
+    active_tab = request.args.get("tab", "")
 
-        # Collect mutable form values
-        values.update(
-            {
-                "telegram_channels": request.form.get("telegram_channels", "").strip(),
-                "listener_keywords": request.form.get("listener_keywords", "").strip(),
-                "google_calendar_id": request.form.get("google_calendar_id", "primary").strip() or "primary",
-                "telegram_phone": request.form.get("telegram_phone", "").strip(),
-                "telegram_code": request.form.get("telegram_code", "").strip(),
-                "telegram_password": request.form.get("telegram_password", "").strip(),
-            }
-        )
-
-        try:
-            if action == "telegram_login":
-                phone = str(values["telegram_phone"]).strip()
-                if not phone:
-                    raise RuntimeError("Telegram phone number is required (example: +60123456789).")
-                telegram_flow_info = start_telegram_web_login(phone)
-
-            elif action == "telegram_verify_code":
-                success_login, message = complete_telegram_web_login(
-                    str(values["telegram_code"]).strip(),
-                    str(values["telegram_password"]).strip(),
-                )
-                if success_login:
-                    success = message
-                else:
-                    telegram_flow_info = message
-
-            elif action == "telegram_cancel_login":
-                clear_telegram_login_state()
-                telegram_flow_info = "Telegram login flow cancelled."
-
-            elif action == "list_channels":
-                channels = list_user_channels()
-                success = f"Loaded {len(channels)} channels/chats from Telegram."
-
-            elif action == "list_google_calendars":
-                google_calendars = list_google_calendars()
-                if google_calendars and (not values["google_calendar_id"] or values["google_calendar_id"] == "primary"):
-                    values["google_calendar_id"] = google_calendars[0]["id"]
-                success = f"Loaded {len(google_calendars)} Google calendars."
-
-            elif action == "save":
-                save_settings(values)
-                success = "Settings saved to config file."
-
-            elif action == "services_start":
-                start_docker_stack()
-                success = "Docker services started."
-            elif action == "services_stop":
-                stop_docker_stack()
-                success = "Docker services stopped."
-            elif action == "services_restart":
-                restart_docker_stack()
-                success = "Docker services restarted with recreated containers."
-            elif action == "services_refresh":
-                success = "Service status refreshed."
-            else:
-                error = f"Unknown action: {action}"
-
-        except Exception as exc:
-            error = f"Setup failed: {exc}"
-            log_warning(logger, "setup_action_failed", action=action, error=exc)
-
-        if not error:
-            log_info(logger, "setup_action_done", action=action, success=success or None, info=info or None)
-
-        service_statuses, services_summary = get_services_status()
-
-        if action != "list_channels":
-            channels, auto_info = try_auto_load_channels()
-            if auto_info and not info and not telegram_flow_info:
-                info = auto_info
-        
-        if action != "list_google_calendars":
-            google_calendars, google_info = try_auto_load_google_calendars()
-        
-        telegram_login_state = get_telegram_login_state()
-        
-        # Re-check Telegram status after login
-        is_telegram_authed, telegram_user = get_telegram_user_info(
-            str(values.get("telegram_api_id", "")).strip(),
-            str(values.get("telegram_api_hash", "")).strip(),
-        )
-        if is_telegram_authed:
-            telegram_info = f"✓ Logged in as {telegram_user}"
-        else:
-            telegram_info = "Telegram not logged in. Click Sign in with Telegram."
-    else:
-        channels, info = try_auto_load_channels()
-        google_calendars, google_info = try_auto_load_google_calendars()
-
-    if telegram_flow_info:
-        info = telegram_flow_info
-
-    return render_template(
-        "setup_wizard.html",
-        values=values,
+    return _render(
         channels=channels,
         google_calendars=google_calendars,
-        success=success,
-        error=error,
-        info=info,
-        telegram_info=telegram_info,
         telegram_login_state=telegram_login_state,
         google_info=google_info,
         service_statuses=service_statuses,
         services_summary=services_summary,
+        info=info,
+        success=success_msg,
+        active_tab=active_tab
     )
+
+
+@APP.route("/tab/telegram", methods=["GET"])
+def tab_telegram():
+    values = current_values()
+    is_telegram_authed, telegram_user = get_telegram_user_info()
+    return render_template(
+        "partials/tab_telegram.html", 
+        values=values, 
+        is_telegram_authed=is_telegram_authed, 
+        telegram_user=telegram_user,
+        telegram_login_state=get_telegram_login_state()
+    )
+
+
+@APP.route("/tab/google", methods=["GET"])
+def tab_google():
+    values = current_values()
+    is_google_authed, google_status = get_google_connection_status(values)
+    _, google_info = try_auto_load_google_calendars()
+    return render_template(
+        "partials/tab_google.html", 
+        values=values, 
+        is_google_authed=is_google_authed, 
+        google_info=google_info
+    )
+
+
+@APP.route("/tab/system", methods=["GET"])
+def tab_system():
+    service_statuses, services_summary = get_services_status()
+    return render_template(
+        "partials/tab_system.html",
+        service_statuses=service_statuses,
+        services_summary=services_summary
+    )
+
+
+@APP.route("/tab/soon/<name>", methods=["GET"])
+def tab_soon(name):
+    # A generic placeholder for upcoming integrations
+    return f"""
+    <div class="section" style="border-top: 3px solid #5d6f8c; text-align: center; padding: 40px 20px;">
+        <h2 style="margin-bottom: 10px;">{name.title()} Integration</h2>
+        <p class="muted">This module is currently in development and will be available in a future update.</p>
+    </div>
+    """
+
 
 
 def launch_browser() -> None:

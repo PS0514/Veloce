@@ -1,0 +1,23 @@
+{% if channels and channels|length > 0 %}
+  <p class="muted">Select channels, then click "Use selected channels" to fill the filter box.</p>
+  <div class="channel-tools">
+    <input id="channelSearch" type="text" placeholder="Search channels..." />
+    <select id="channelSort">
+      <option value="latest">Sort: Latest message</option>
+      <option value="name">Sort: Name</option>
+    </select>
+  </div>
+  <div id="channelList" class="channel-list">
+    {% for ch in channels %}
+      <label class="channel-item" data-search="{{ ch.search_text }}" data-label="{{ ch.label|lower }}" data-last="{{ ch.last_message_ts }}">
+        <input type="checkbox" name="selected_channels" value="{{ ch.value }}" />
+        <span>
+          {{ ch.label }}
+          <small class="muted channel-meta">Last message: {{ ch.last_message_human }}</small>
+        </span>
+      </label>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">No channels loaded yet. Complete Telegram login first, then click "List my channels".</p>
+{% endif %}

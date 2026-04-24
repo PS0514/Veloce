@@ -1,0 +1,30 @@
+<div id="google-section" class="section">
+  <div class="section-head">
+    <h2 class="section-title">Google Authentication</h2>
+    <p class="section-sub">Connect your Google account to enable calendar scheduling.</p>
+  </div>
+
+  {% if is_google_authed %}
+    <div class="ok" style="margin-top: 10px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center;">
+      <span>✓ Connected to Google Calendar</span>
+      <button type="button" 
+              hx-post="/action/google-logout" 
+              hx-target="#google-tab-wrapper" 
+              hx-swap="outerHTML" 
+              style="background: transparent; color: #e76f51; border: 1px solid #f6bcae; padding: 4px 10px; font-size: 0.8rem; box-shadow: none;">
+        Disconnect
+      </button>
+    </div>
+  {% else %}
+    <div class="guide" style="margin-top: 10px;">
+      <p style="margin: 0; font-size: 0.9rem;">Click below to authorize Veloce to access your Google Calendar.</p>
+    </div>
+    <div class="actions" style="margin-top: 12px;">
+      <a href="{{ url_for('google_oauth_start') }}" style="display: inline-block; text-decoration: none; border: 0; border-radius: 12px; background: linear-gradient(120deg, #06d6a0, #118ab2); color: #fff; font-weight: 700; letter-spacing: 0.2px; padding: 11px 16px; box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);">Sign in with Google</a>
+    </div>
+  {% endif %}
+
+  <!-- {% if google_info %}
+    <div class="info" style="margin-top: 12px;">{{ google_info }}</div>
+  {% endif %} -->
+</div>

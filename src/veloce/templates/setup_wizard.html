@@ -1,617 +1,519 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Veloce Setup Wizard</title>
-    <style>
-      :root {
-        --bg: #f3f7ff;
-        --card: #ffffff;
-        --ink: #13223f;
-        --muted: #5d6f8c;
-        --accent: #ef476f;
-        --accent-2: #118ab2;
-        --accent-3: #06d6a0;
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veloce Setup</title>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    :root {
+      --bg: #f3f7ff;
+      --card: #ffffff;
+      --ink: #13223f;
+      --muted: #5d6f8c;
+      --accent: #ef476f;
+      --accent-2: #118ab2;
+      --accent-3: #06d6a0;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
+      background:
+        radial-gradient(circle at 8% 2%, #d5e9ff 0%, rgba(213, 233, 255, 0) 38%),
+        radial-gradient(circle at 92% 88%, #ffe2e8 0%, rgba(255, 226, 232, 0) 30%),
+        linear-gradient(170deg, #f7fbff 0%, var(--bg) 62%);
+      color: var(--ink);
+    }
+
+    .shell {
+      max-width: 980px;
+      margin: 30px auto;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+      border-radius: 20px;
+      padding: 28px;
+      border: 1px solid rgba(83, 112, 160, 0.14);
+      box-shadow: 0 26px 60px rgba(17, 43, 93, 0.14);
+      backdrop-filter: blur(6px);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 2.1rem;
+      letter-spacing: 0.2px;
+    }
+
+    .hero-sub {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .hero {
+      padding: 16px 18px;
+      border-radius: 14px;
+      margin-bottom: 16px;
+      background: linear-gradient(125deg, rgba(17, 138, 178, 0.13), rgba(239, 71, 111, 0.12));
+    }
+
+    /* --- TOAST NOTIFICATIONS --- */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .toast {
+      padding: 14px 20px;
+      border-radius: 10px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+      color: white;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, fadeOut 0.4s ease forwards 4s;
+    }
+
+    .toast.success {
+      background: linear-gradient(135deg, #2a9d8f, #21867a);
+    }
+
+    .toast.error {
+      background: linear-gradient(135deg, #e76f51, #d65a3d);
+    }
+
+    .toast.info {
+      background: linear-gradient(135deg, #3d7cc0, #2c65a3);
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(120%);
       }
-      body {
-        margin: 0;
-        font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif;
-        background:
-          radial-gradient(circle at 8% 2%, #d5e9ff 0%, rgba(213, 233, 255, 0) 38%),
-          radial-gradient(circle at 92% 88%, #ffe2e8 0%, rgba(255, 226, 232, 0) 30%),
-          linear-gradient(170deg, #f7fbff 0%, var(--bg) 62%);
-        color: var(--ink);
+
+      to {
+        transform: translateX(0);
       }
-      .shell {
-        max-width: 980px;
-        margin: 30px auto;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
-        border-radius: 20px;
-        padding: 28px;
-        border: 1px solid rgba(83, 112, 160, 0.14);
-        box-shadow: 0 26px 60px rgba(17, 43, 93, 0.14);
-        backdrop-filter: blur(6px);
+    }
+
+    @keyframes fadeOut {
+      to {
+        opacity: 0;
+        transform: translateY(20px);
+        visibility: hidden;
       }
-      h1 {
-        margin: 0;
-        font-size: 2.1rem;
-        letter-spacing: 0.2px;
+    }
+
+    /* --- INTEGRATION GRID --- */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .integration-card {
+      border: 1px solid #c6d4e8;
+      padding: 16px;
+      border-radius: 12px;
+      background: #fff;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .integration-card:hover {
+      border-color: var(--accent-2);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(17, 138, 178, 0.1);
+    }
+
+    .integration-card.active {
+      border: 2px solid var(--accent-2);
+      background: #f0f8fb;
+    }
+
+    .integration-card.disabled {
+      border-style: dashed;
+      opacity: 0.6;
+    }
+
+    .integration-icon {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+    }
+
+    /* --- LIST STYLES (Channels & Calendars) --- */
+    .channel-list,
+    .calendar-list {
+      max-height: 250px;
+      overflow-y: auto;
+      border: 1px solid #c6d4e8;
+      border-radius: 8px;
+      background: #fff;
+      margin-top: 10px;
+    }
+
+    .channel-item,
+    .calendar-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f0f4f8;
+      cursor: pointer;
+      margin-bottom: 0;
+      font-weight: 400;
+    }
+
+    .channel-item:last-child,
+    .calendar-item:last-child {
+      border-bottom: none;
+    }
+
+    .channel-item:hover,
+    .calendar-item:hover {
+      background: #f8fbff;
+    }
+
+    .channel-item input,
+    .calendar-item input {
+      width: auto;
+      margin-right: 12px;
+    }
+
+    .channel-meta {
+      display: block;
+      font-size: 0.8rem;
+      margin-top: 2px;
+    }
+
+    .channel-tools {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .channel-tools input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .channel-tools select {
+      flex: 0 0 160px;
+    }
+
+    /* --- SYSTEM SERVICES --- */
+    .services {
+      border: 1px solid #c6d4e8;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px 12px;
+    }
+
+    .service-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f4f8;
+      font-family: Consolas, monospace;
+      font-size: 0.95rem;
+    }
+
+    .service-row:last-child {
+      border-bottom: none;
+    }
+
+    .badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-running {
+      background: #e6f6f4;
+      color: #2a9d8f;
+    }
+
+    .badge-stopped {
+      background: #fff0f0;
+      color: #e76f51;
+    }
+
+    /* --- SECTIONS --- */
+    .section {
+      margin-top: 16px;
+      border: 1px solid #d9e2ee;
+      border-radius: 12px;
+      padding: 14px;
+      background: #fafdff;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 1.04rem;
+    }
+
+    .section-sub {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .dev-badge {
+      display: inline-block;
+      background: #ffeaa7;
+      color: #6c5b1e;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #c6d4e8;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 0.98rem;
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    textarea {
+      min-height: 78px;
+      resize: vertical;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-weight: 700;
+      padding: 11px 16px;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);
+    }
+
+    .ok {
+      border-left: 4px solid #2a9d8f;
+      background: #edf9f7;
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+
+    .warn {
+      border-left: 4px solid #e76f51;
+      background: #fff2ef;
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+
+    .info {
+      border-left: 4px solid #3d7cc0;
+      background: #eff6ff;
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .fade-in {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(5px);
       }
-      .hero-sub {
-        margin: 8px 0 0;
-        color: var(--muted);
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
       }
-      .hero {
-        padding: 16px 18px;
-        border-radius: 14px;
-        margin-bottom: 16px;
-        background: linear-gradient(125deg, rgba(17, 138, 178, 0.13), rgba(239, 71, 111, 0.12));
-      }
-      p {
-        color: var(--muted);
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 16px;
-      }
-      .section {
-        margin-top: 16px;
-        border: 1px solid #d9e2ee;
-        border-radius: 12px;
-        padding: 14px;
-        background: #fafdff;
-      }
+    }
+
+    @media (max-width: 680px) {
       .section-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 10px;
-        margin-bottom: 10px;
-      }
-      .section-title {
-        margin: 0;
-        font-size: 1.04rem;
-      }
-      .section-sub {
-        margin: 0;
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-      .dev-badge {
-        display: inline-block;
-        background: #ffeaa7;
-        color: #6c5b1e;
-        font-size: 0.72rem;
-        font-weight: 700;
-        padding: 2px 8px;
-        border-radius: 999px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      label {
-        display: block;
-        font-weight: 600;
-        margin-bottom: 6px;
-      }
-      input,
-      textarea,
-      select {
-        width: 100%;
-        box-sizing: border-box;
-        border: 1px solid #c6d4e8;
-        border-radius: 12px;
-        padding: 10px 12px;
-        font-size: 0.98rem;
-        background: rgba(255, 255, 255, 0.92);
-      }
-      input:focus,
-      textarea:focus,
-      select:focus {
-        outline: 0;
-        border-color: #6399dd;
-        box-shadow: 0 0 0 3px rgba(99, 153, 221, 0.18);
-      }
-      textarea {
-        min-height: 78px;
-        resize: vertical;
-      }
-      .actions {
-        margin-top: 18px;
-      }
-      button {
-        border: 0;
-        border-radius: 12px;
-        background: linear-gradient(120deg, var(--accent), var(--accent-2));
-        color: #fff;
-        font-weight: 700;
-        letter-spacing: 0.2px;
-        padding: 11px 16px;
-        cursor: pointer;
-        box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);
-      }
-      button:hover {
-        transform: translateY(-1px);
-      }
-      .panel-title {
-        margin: 0;
-        font-size: 1.02rem;
-      }
-      .note {
-        margin-top: 16px;
-        border-left: 4px solid var(--accent-3);
-        background: #ecfbf6;
-        padding: 10px 12px;
-        border-radius: 8px;
-        color: #18443d;
-      }
-      .ok {
-        margin-bottom: 14px;
-        border-left: 4px solid #2a9d8f;
-        background: #edf9f7;
-        padding: 10px 12px;
-        border-radius: 8px;
-      }
-      .warn {
-        margin-bottom: 14px;
-        border-left: 4px solid #e76f51;
-        background: #fff2ef;
-        padding: 10px 12px;
-        border-radius: 8px;
-      }
-      .info {
-        margin-bottom: 14px;
-        border-left: 4px solid #3d7cc0;
-        background: #eff6ff;
-        padding: 10px 12px;
-        border-radius: 8px;
-      }
-      .guide {
-        margin-top: 10px;
-        border: 1px solid #d9e2ee;
-        border-radius: 10px;
-        padding: 12px;
-        background: #fbfdff;
-      }
-      .guide ol {
-        margin: 8px 0 0 18px;
-        color: var(--muted);
-      }
-      .guide li {
-        margin: 6px 0;
-      }
-      .channels {
-        margin-top: 8px;
-        border: 1px solid #d9e2ee;
-        border-radius: 10px;
-        padding: 12px;
-        background: #fafcff;
-      }
-      .channel-tools {
-        display: grid;
-        grid-template-columns: 1fr 180px;
-        gap: 8px;
-        margin: 10px 0;
-      }
-      .channel-list {
-        max-height: 260px;
-        overflow-y: auto;
-      }
-      .channel-item {
-        display: flex;
-        gap: 8px;
+        flex-direction: column;
         align-items: flex-start;
-        margin-bottom: 8px;
-        font-weight: 500;
       }
-      .channel-item input[type="checkbox"] {
-        width: 16px;
-        min-width: 16px;
-        height: 16px;
-        margin: 2px 0 0;
-        padding: 0;
-        flex: 0 0 auto;
-      }
-      .channel-item span {
-        display: inline-block;
-        line-height: 1.35;
-        word-break: break-word;
-      }
-      .channel-meta {
-        display: block;
-        margin-top: 2px;
-      }
-      .muted {
-        color: var(--muted);
-        font-size: 0.92rem;
-      }
-      .services {
-        margin-top: 8px;
-        border: 1px solid #d9e2ee;
-        border-radius: 10px;
-        padding: 12px;
-        background: #fafcff;
-      }
-      .calendar-list {
-        margin-top: 8px;
-        border: 1px solid #d9e2ee;
-        border-radius: 10px;
-        padding: 12px;
-        background: #fafcff;
-      }
-      .calendar-item {
-        display: flex;
-        gap: 8px;
-        align-items: flex-start;
-        margin-bottom: 8px;
-        font-weight: 500;
-      }
-      .calendar-item input[type="radio"] {
-        width: 16px;
-        min-width: 16px;
-        height: 16px;
-        margin: 2px 0 0;
-        padding: 0;
-        flex: 0 0 auto;
-      }
-      .calendar-item span {
-        display: inline-block;
-        line-height: 1.35;
-        word-break: break-word;
-      }
-      .service-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid #e6edf6;
-        padding: 8px 0;
-        gap: 12px;
-      }
-      .service-row:last-child {
-        border-bottom: 0;
-      }
-      .badge {
-        display: inline-block;
-        border-radius: 999px;
-        padding: 3px 10px;
-        font-size: 0.83rem;
-        font-weight: 700;
-      }
-      .badge-running {
-        background: #def7ef;
-        color: #116149;
-      }
-      .badge-stopped {
-        background: #fdeceb;
-        color: #8d231a;
-      }
-      .badge-unknown {
-        background: #edf1f9;
-        color: #394b63;
-      }
-      @media (max-width: 680px) {
-        .channel-tools {
-          grid-template-columns: 1fr;
-        }
-        .service-row {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-        .section-head {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-      }
-    </style>
-    <script>
-      function applySelectedChannels() {
-        const selected = Array.from(document.querySelectorAll('input[name="selected_channels"]:checked')).map((el) => el.value);
-        const target = document.querySelector('textarea[name="telegram_channels"]');
-        if (!target) return;
+    }
+  </style>
+</head>
 
-        const existing = target.value
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
+<body>
+  <div class="shell">
+    <div class="hero">
+      <h1>Veloce Setup</h1>
+      <p class="hero-sub">Configure integrations and schedule tasks automatically.</p>
+    </div>
 
-        const merged = Array.from(new Set(existing.concat(selected)));
-        target.value = merged.join(',');
-      }
+    <div id="toast-container">
+      {% if success %}<div class="toast success">✓ {{ success }}</div>{% endif %}
+      {% if error %}<div class="toast error">⚠️ {{ error }}</div>{% endif %}
+      {% if info %}<div class="toast info">ℹ️ {{ info }}</div>{% endif %}
+    </div>
 
-      function applySelectedCalendar() {
-        const selected = document.querySelector('input[name="selected_google_calendar"]:checked');
-        const target = document.querySelector('input[name="google_calendar_id"]');
-        if (!selected || !target) return;
-        target.value = selected.value;
-      }
-
-      function filterAndSortChannels() {
-        const container = document.getElementById('channelList');
-        if (!container) return;
-
-        const searchText = (document.getElementById('channelSearch')?.value || '').trim().toLowerCase();
-        const sortBy = document.getElementById('channelSort')?.value || 'latest';
-        const items = Array.from(container.querySelectorAll('.channel-item'));
-
-        items.forEach((item) => {
-          const haystack = (item.dataset.search || '').toLowerCase();
-          item.style.display = haystack.includes(searchText) ? 'flex' : 'none';
-        });
-
-        const visibleItems = items.filter((item) => item.style.display !== 'none');
-        visibleItems.sort((a, b) => {
-          if (sortBy === 'name') {
-            return (a.dataset.label || '').localeCompare(b.dataset.label || '');
-          }
-
-          const aLast = Number(a.dataset.last || '0');
-          const bLast = Number(b.dataset.last || '0');
-          if (aLast !== bLast) {
-            return bLast - aLast;
-          }
-          return (a.dataset.label || '').localeCompare(b.dataset.label || '');
-        });
-
-        visibleItems.forEach((item) => container.appendChild(item));
-      }
-
-      document.addEventListener('DOMContentLoaded', function () {
-        const searchInput = document.getElementById('channelSearch');
-        const sortSelect = document.getElementById('channelSort');
-        if (searchInput) searchInput.addEventListener('input', filterAndSortChannels);
-        if (sortSelect) sortSelect.addEventListener('change', filterAndSortChannels);
-        filterAndSortChannels();
-      });
-    </script>
-  </head>
-  <body>
-    <div class="shell">
-      <div class="hero">
-        <h1>Veloce Local Setup</h1>
-        <p class="hero-sub">Login to Telegram &amp; Google, select channels, configure keywords, and pick a calendar.</p>
+    <div class="grid" style="margin-bottom: 20px;">
+      <div class="integration-card" hx-get="/tab/telegram" hx-target="#integration-content">
+        <img src="/static/logos/telegram.png" class="integration-icon" alt="Telegram"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>'">
+        <strong style="color: var(--ink);">Telegram</strong>
       </div>
 
-      {% if success %}
-        <div class="ok">{{ success }}</div>
-      {% endif %}
-      {% if error %}
-        <div class="warn">{{ error }}</div>
-      {% endif %}
-      {% if info %}
-        <div class="info">{{ info }}</div>
-      {% endif %}
+      <div class="integration-card" hx-get="/tab/google" hx-target="#integration-content">
+        <img src="/static/logos/google-calendar.png" class="integration-icon" alt="Google Calendar"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>'">
+        <strong style="color: var(--ink);">Google Calendar</strong>
+      </div>
 
-      <form method="post" action="{{ url_for('index') }}">
-        <div class="actions">
-          <button type="submit" name="action" value="save">Save configuration</button>
-          <button type="submit" name="action" value="save_restart" style="margin-left: 8px; background: #264653;">Save and restart services</button>
-        </div>
-      <form method="post">
+      <div class="integration-card disabled" hx-get="/tab/soon/whatsapp" hx-target="#integration-content">
+        <img src="/static/logos/whatsapp.png" class="integration-icon" alt="WhatsApp"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📱</text></svg>'">
+        <strong style="color: var(--muted);">WhatsApp</strong>
+      </div>
 
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 1. TELEGRAM LOGIN                                         -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Telegram Login</h2>
-            <p class="section-sub">Sign in with your Telegram account to start listening for messages.</p>
-          </div>
+      <div class="integration-card disabled" hx-get="/tab/soon/discord" hx-target="#integration-content">
+        <img src="/static/logos/discord.png" class="integration-icon" alt="Discord"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>'">
+        <strong style="color: var(--muted);">Discord</strong>
+      </div>
 
-          <div class="guide">
-            <strong class="panel-title">How to log in</strong>
-            <ol>
-              <li>Enter your phone number in international format (example: <code>+60123456789</code>).</li>
-              <li>Click <strong>Start Telegram login</strong> to receive a verification code.</li>
-              <li>Enter the code and click <strong>Verify code</strong>.</li>
-              <li>If prompted, enter your Telegram 2FA password and verify again.</li>
-            </ol>
-          </div>
-
-          <div class="grid" style="margin-top: 10px;">
-            <div>
-              <label>Phone Number</label>
-              <input name="telegram_phone" placeholder="+60123456789" value="{{ values.telegram_phone }}" />
-            </div>
-            <div>
-              <label>Verification Code</label>
-              <input name="telegram_code" placeholder="12345" value="{{ values.telegram_code }}" />
-            </div>
-            {% if telegram_login_state and telegram_login_state.get('awaiting') == 'password' %}
-              <div>
-                <label>2FA Password</label>
-                <input type="password" name="telegram_password" placeholder="Your Telegram 2FA password" value="{{ values.telegram_password }}" />
-              </div>
-            {% endif %}
-          </div>
-
-          <div class="actions" style="margin-top: 12px;">
-            <button type="submit" name="action" value="telegram_login" style="background: linear-gradient(120deg, #ef476f, #ffd166); color: #fff;">Start Telegram login</button>
-            <button type="submit" name="action" value="telegram_verify_code" style="margin-left: 8px; background: #2a9d8f;">Verify code</button>
-            <button type="submit" name="action" value="telegram_cancel_login" style="margin-left: 8px; background: #9b2226;">Cancel login</button>
-          </div>
-
-          <div class="info" style="margin-top: 12px;">{{ telegram_info }}</div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 2. CHANNEL SELECTION                                      -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Channel Selection</h2>
-            <p class="section-sub">Choose which Telegram channels/chats to monitor for task messages.</p>
-          </div>
-
-          <div>
-            <label>Listen only to these channels/chats</label>
-            <textarea name="telegram_channels" placeholder="Examples: @course_updates, -1001234567890">{{ values.telegram_channels }}</textarea>
-            <p>Comma-separated values. Mix usernames and numeric chat IDs.</p>
-          </div>
-
-          <div class="channels">
-            <strong class="panel-title">Available channels/chats</strong>
-            {% if channels and channels|length > 0 %}
-              <p class="muted">Select channels, then click "Use selected channels" to fill the filter box.</p>
-              <div class="channel-tools">
-                <input id="channelSearch" type="text" placeholder="Search channels..." />
-                <select id="channelSort">
-                  <option value="latest">Sort: Latest message</option>
-                  <option value="name">Sort: Name</option>
-                </select>
-              </div>
-              <div id="channelList" class="channel-list">
-                {% for ch in channels %}
-                  <label class="channel-item" data-search="{{ ch.search_text }}" data-label="{{ ch.label|lower }}" data-last="{{ ch.last_message_ts }}">
-                    <input type="checkbox" name="selected_channels" value="{{ ch.value }}" />
-                    <span>
-                      {{ ch.label }}
-                      <small class="muted channel-meta">Last message: {{ ch.last_message_human }}</small>
-                    </span>
-                  </label>
-                {% endfor %}
-              </div>
-            {% else %}
-              <p class="muted">No channels loaded yet. Complete Telegram login first, then click "List my channels".</p>
-            {% endif %}
-          </div>
-
-          <div class="actions" style="margin-top: 12px;">
-            <button type="submit" name="action" value="list_channels">List my channels</button>
-            <button type="button" onclick="applySelectedChannels()" style="margin-left: 8px; background: #1b4965;">Use selected channels</button>
-          </div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 3. KEYWORD FILTER                                         -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Keyword Filter</h2>
-            <p class="section-sub">Only forward messages containing these keywords to the scheduler.</p>
-          </div>
-          <div>
-            <label>Keywords (comma-separated, leave empty to process all messages)</label>
-            <input name="listener_keywords" placeholder="assignment,deadline,due,exam,project" value="{{ values.listener_keywords }}" />
-          </div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 4. GOOGLE LOGIN                                           -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Google Login</h2>
-            <p class="section-sub">Sign in with your Google account to enable calendar scheduling.</p>
-          </div>
-
-          <div class="guide">
-            <strong class="panel-title">Prerequisites</strong>
-            <ol>
-              <li>Set <code>ENABLE_GOOGLE_SYNC=true</code> in your <code>.env</code> file.</li>
-              <li>Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in <code>.env</code>.</li>
-              <li>Add this redirect URI in Google Cloud Console: <code>http://127.0.0.1:8765/google/oauth/callback</code></li>
-              <li>Click <strong>Sign in with Google</strong> below to complete the OAuth flow.</li>
-            </ol>
-          </div>
-
-          <div class="actions" style="margin-top: 12px;">
-            <a href="{{ url_for('google_oauth_start') }}" style="display: inline-block; text-decoration: none; border: 0; border-radius: 12px; background: linear-gradient(120deg, #06d6a0, #118ab2); color: #fff; font-weight: 700; letter-spacing: 0.2px; padding: 11px 16px; box-shadow: 0 8px 18px rgba(37, 73, 124, 0.24);">Sign in with Google</a>
-          </div>
-
-          {% if google_info %}
-            <div class="info" style="margin-top: 12px;">{{ google_info }}</div>
-          {% endif %}
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 5. CALENDAR SELECTION                                     -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Calendar Selection</h2>
-            <p class="section-sub">Pick the Google Calendar where tasks will be scheduled.</p>
-          </div>
-
-          <div>
-            <label>Selected Calendar ID</label>
-            <input name="google_calendar_id" value="{{ values.google_calendar_id }}" placeholder="primary" readonly />
-          </div>
-
-          <div class="calendar-list">
-            <strong class="panel-title">Available Google calendars</strong>
-            {% if google_calendars and google_calendars|length > 0 %}
-              <p class="muted">Choose one calendar as the scheduling target, then click "Use selected calendar".</p>
-              {% for cal in google_calendars %}
-                <label class="calendar-item">
-                  <input type="radio" name="selected_google_calendar" value="{{ cal.id }}" {% if cal.id == values.google_calendar_id %}checked{% endif %} />
-                  <span>
-                    {{ cal.label }}
-                    <small class="muted channel-meta">Calendar ID: {{ cal.id }}</small>
-                  </span>
-                </label>
-              {% endfor %}
-            {% else %}
-              <p class="muted">No Google calendars loaded yet. Sign in with Google first, then click "List my calendars".</p>
-            {% endif %}
-
-            <div class="actions" style="margin-top: 10px;">
-              <button type="submit" name="action" value="list_google_calendars">List my calendars</button>
-              <button type="button" onclick="applySelectedCalendar()" style="margin-left: 8px; background: #1b4965;">Use selected calendar</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- SAVE BUTTON                                               -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="actions" style="margin-top: 20px;">
-          <button type="submit" name="action" value="save">Save settings</button>
-        </div>
-
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <!-- 6. DOCKER SERVICES (development)                          -->
-        <!-- ═══════════════════════════════════════════════════════════ -->
-        <div class="section">
-          <div class="section-head">
-            <h2 class="section-title">Docker Services <span class="dev-badge">Development</span></h2>
-            <p class="section-sub">Start, stop, restart, and inspect runtime service status.</p>
-          </div>
-
-          <div class="services">
-            <strong class="panel-title">Service status</strong>
-            <p class="muted" style="margin: 6px 0 8px;">{{ services_summary }}</p>
-            {% if service_statuses and service_statuses|length > 0 %}
-              {% for svc in service_statuses %}
-                <div class="service-row">
-                  <span>{{ svc.name }}</span>
-                  {% if svc.state == 'running' %}
-                    <span class="badge badge-running">running</span>
-                  {% elif svc.state == 'stopped' %}
-                    <span class="badge badge-stopped">stopped</span>
-                  {% else %}
-                    <span class="badge badge-unknown">unknown</span>
-                  {% endif %}
-                </div>
-              {% endfor %}
-            {% else %}
-              <p class="muted">No compose services were detected yet.</p>
-            {% endif %}
-
-            <div class="actions" style="margin-top: 10px;">
-              <button type="submit" name="action" value="services_refresh" style="background: #3d5a80;">Refresh status</button>
-              <button type="submit" name="action" value="services_start" style="margin-left: 8px;">Start services</button>
-              <button type="submit" name="action" value="services_stop" style="margin-left: 8px; background: #9b2226;">Stop services</button>
-              <button type="submit" name="action" value="services_restart" style="margin-left: 8px; background: #2a9d8f;">Restart services</button>
-            </div>
-          </div>
-        </div>
-
-      </form>
-
-      <div class="note">
-        Static settings (API keys, URLs, timezone) are configured in <code>.env</code>. This wizard manages only interactive configuration.
+      <div class="integration-card" hx-get="/tab/system" hx-target="#integration-content" style="background: #f8fbff;">
+        <img src="/static/logos/docker.png" class="integration-icon" alt="System"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚙️</text></svg>'">
+        <strong style="color: var(--ink);">System & Docker</strong>
       </div>
     </div>
-  </body>
+
+    <div id="integration-content" style="min-height: 350px;">
+      {% if active_tab == 'google' %}
+      <div hx-get="/tab/google" hx-trigger="load"></div>
+      {% elif active_tab == 'telegram' %}
+      <div hx-get="/tab/telegram" hx-trigger="load"></div>
+      {% else %}
+      <div hx-get="/tab/system" hx-trigger="load">
+        <p class="muted" style="padding: 20px; text-align: center;">Loading system status...</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="actions" style="margin-top: 20px; text-align: right; border-top: 1px solid #e6edf6; padding-top: 20px;">
+      <button type="button" hx-post="/action/save"
+        hx-include="[name='telegram_channels'], [name='listener_keywords'], [name='google_calendar_id']" hx-swap="none">
+        Save All Settings
+      </button>
+    </div>
+  </div>
+</body>
+
 </html>
+
+<script>
+  // Apply selected channels to the textarea
+  function applySelectedChannels() {
+    const checkboxes = document.querySelectorAll('input[name="selected_channels"]:checked');
+    const values = Array.from(checkboxes).map(cb => cb.value);
+    if (values.length === 0) {
+      alert("No channels selected.");
+      return;
+    }
+    const textarea = document.querySelector('textarea[name="telegram_channels"]');
+    let current = textarea.value.split(',').map(s => s.trim()).filter(s => s);
+    values.forEach(v => {
+      if (!current.includes(v)) current.push(v);
+    });
+    textarea.value = current.join(', ');
+  }
+
+  // Apply selected calendar to the input field
+  function applySelectedCalendar() {
+    const radio = document.querySelector('input[name="selected_google_calendar"]:checked');
+    if (!radio) {
+      alert("No calendar selected.");
+      return;
+    }
+    document.querySelector('input[name="google_calendar_id"]').value = radio.value;
+  }
+
+  // Handle HTMX loaded content (Search and Sort for channels)
+  document.body.addEventListener('htmx:afterSwap', function(evt) {
+    const searchInput = document.getElementById('channelSearch');
+    const sortSelect = document.getElementById('channelSort');
+    const listContainer = document.getElementById('channelList');
+
+    if (searchInput && listContainer) {
+      // Search logic
+      searchInput.addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        const items = listContainer.querySelectorAll('.channel-item');
+        items.forEach(item => {
+          const searchData = item.getAttribute('data-search') || '';
+          item.style.display = searchData.includes(query) ? 'flex' : 'none';
+        });
+      });
+
+      // Sort logic
+      if (sortSelect) {
+        sortSelect.addEventListener('change', function() {
+          const sortBy = this.value;
+          const items = Array.from(listContainer.querySelectorAll('.channel-item'));
+          
+          items.sort((a, b) => {
+            if (sortBy === 'name') {
+              const nameA = a.getAttribute('data-label') || '';
+              const nameB = b.getAttribute('data-label') || '';
+              return nameA.localeCompare(nameB);
+            } else {
+              // 'latest' - sort by timestamp descending
+              const timeA = parseInt(a.getAttribute('data-last') || '0', 10);
+              const timeB = parseInt(b.getAttribute('data-last') || '0', 10);
+              return timeB - timeA;
+            }
+          });
+          
+          // Re-append in new order
+          items.forEach(item => listContainer.appendChild(item));
+        });
+      }
+    }
+  });
+</script>

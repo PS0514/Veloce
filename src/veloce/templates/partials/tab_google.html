@@ -1,0 +1,7 @@
+<div id="google-tab-wrapper" class="fade-in">
+  {% include "partials/google_section.html" ignore missing %}
+  
+  {% if is_google_authed %}
+    {% include "partials/google_config_section.html" ignore missing %}
+  {% endif %}
+</div>

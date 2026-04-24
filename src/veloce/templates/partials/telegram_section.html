@@ -1,0 +1,59 @@
+<div id="telegram-section" class="section">
+  <div class="section-head">
+    <h2 class="section-title">Telegram Authentication</h2>
+    <p class="section-sub">Connect your account to listen for incoming tasks.</p>
+  </div>
+
+  {% if is_telegram_authed %}
+    <div class="ok" style="margin-top: 10px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center;">
+      <span>✓ Connected as <strong>{{ telegram_user }}</strong></span>
+      <button type="button" 
+              hx-post="/action/telegram-logout" 
+              hx-target="#telegram-tab-wrapper" 
+              hx-swap="outerHTML" 
+              style="background: transparent; color: #e76f51; border: 1px solid #f6bcae; padding: 4px 10px; font-size: 0.8rem; box-shadow: none;">
+        Disconnect
+      </button>
+    </div>
+  {% else %}
+    <form hx-target="#telegram-section" hx-swap="outerHTML">
+      
+      {% if not telegram_login_state or not telegram_login_state.get('awaiting') %}
+        <div style="display: flex; gap: 10px; align-items: flex-end; margin-top: 10px;">
+          <div style="flex: 1;">
+            <label>Phone Number</label>
+            <input name="telegram_phone" placeholder="+60123456789" required />
+          </div>
+          <button type="button" hx-post="/action/telegram-login" style="background: #ef476f;">Send Code</button>
+        </div>
+
+      {% elif telegram_login_state.get('awaiting') == 'code' %}
+        <div class="info" style="margin-top: 10px;">A code was sent to your Telegram app ({{ telegram_login_state.get('phone') }}).</div>
+        <input type="hidden" name="telegram_phone" value="{{ telegram_login_state.get('phone') }}" />
+        
+        <div style="display: flex; gap: 10px; align-items: flex-end;">
+          <div style="flex: 1;">
+            <label>Verification Code</label>
+            <input name="telegram_code" placeholder="12345" required autofocus />
+          </div>
+          <button type="button" hx-post="/action/telegram-verify" style="background: #2a9d8f;">Verify Code</button>
+          <button type="button" hx-post="/action/telegram-cancel" style="background: transparent; color: #5d6f8c; border: 1px solid #c6d4e8; box-shadow: none;">Cancel</button>
+        </div>
+
+      {% elif telegram_login_state.get('awaiting') == 'password' %}
+        <div class="warn" style="margin-top: 10px;">Your account has Two-Step Verification enabled.</div>
+        <input type="hidden" name="telegram_phone" value="{{ telegram_login_state.get('phone') }}" />
+        
+        <div style="display: flex; gap: 10px; align-items: flex-end;">
+          <div style="flex: 1;">
+            <label>2FA Password</label>
+            <input type="password" name="telegram_password" placeholder="Password" required autofocus />
+          </div>
+          <button type="button" hx-post="/action/telegram-verify" style="background: #2a9d8f;">Verify Password</button>
+          <button type="button" hx-post="/action/telegram-cancel" style="background: transparent; color: #5d6f8c; border: 1px solid #c6d4e8; box-shadow: none;">Cancel</button>
+        </div>
+      {% endif %}
+      
+    </form>
+  {% endif %}
+</div>

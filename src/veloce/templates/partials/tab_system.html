@@ -1,0 +1,19 @@
+<div class="section fade-in">
+  <div class="section-head">
+    <h2 class="section-title">Docker Services <span class="dev-badge">Development</span></h2>
+    <p class="section-sub">Start, stop, restart, and inspect runtime service status.</p>
+  </div>
+
+  <div class="services" id="service-list-container">
+    {% include "partials/service_list.html" ignore missing %}
+  </div>
+
+  <form hx-post="/action/services" hx-target="#service-list-container">
+    <div class="actions" style="margin-top: 10px;">
+      <button type="submit" name="service_action" value="refresh" style="background: #3d5a80;">Refresh Status</button>
+      <button type="submit" name="service_action" value="start" style="margin-left: 8px;">Start</button>
+      <button type="submit" name="service_action" value="stop" style="margin-left: 8px; background: #9b2226;">Stop</button>
+      <button type="submit" name="service_action" value="restart" style="margin-left: 8px; background: #2a9d8f;">Restart</button>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,7 @@
+<div id="telegram-tab-wrapper" class="fade-in">
+  {% include "partials/telegram_section.html" ignore missing %}
+  
+  {% if is_telegram_authed %}
+    {% include "partials/telegram_config_section.html" ignore missing %}
+  {% endif %}
+</div>

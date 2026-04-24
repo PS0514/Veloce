@@ -1,0 +1,5 @@
+<div id="toast-container" hx-swap-oob="beforeend">
+  {% if success %}<div class="toast success">✓ {{ success }}</div>{% endif %}
+  {% if error %}<div class="toast error">⚠️ {{ error }}</div>{% endif %}
+  {% if info %}<div class="toast info">ℹ️ {{ info }}</div>{% endif %}
+</div>

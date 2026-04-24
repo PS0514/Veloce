@@ -1,0 +1,13 @@
+{% if google_calendars and google_calendars|length > 0 %}
+  {% for cal in google_calendars %}
+    <label class="calendar-item">
+      <input type="radio" name="selected_google_calendar" value="{{ cal.id }}" {% if cal.id == values.google_calendar_id %}checked{% endif %} />
+      <span>
+        {{ cal.label }}
+        <small class="muted channel-meta">Calendar ID: {{ cal.id }}</small>
+      </span>
+    </label>
+  {% endfor %}
+{% else %}
+  <p class="muted" style="padding: 10px;">No Google calendars loaded yet. Sign in with Google first, then click "List my calendars".</p>
+{% endif %}

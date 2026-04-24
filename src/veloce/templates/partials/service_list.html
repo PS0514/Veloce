@@ -1,0 +1,18 @@
+<strong class="panel-title">Service status</strong>
+<p class="muted" style="margin: 6px 0 8px;">{{ services_summary }}</p>
+{% if service_statuses and service_statuses|length > 0 %}
+  {% for svc in service_statuses %}
+    <div class="service-row">
+      <span>{{ svc.name }}</span>
+      {% if svc.state == 'running' %}
+        <span class="badge badge-running">running</span>
+      {% elif svc.state == 'stopped' %}
+        <span class="badge badge-stopped">stopped</span>
+      {% else %}
+        <span class="badge badge-unknown">unknown</span>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">No compose services were detected yet.</p>
+{% endif %}
