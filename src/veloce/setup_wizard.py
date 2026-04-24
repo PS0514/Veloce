@@ -62,6 +62,7 @@ def current_values() -> dict[str, str | bool]:
         "google_calendar_id": cfg.get("google_calendar_id", _env("GOOGLE_CALENDAR_ID", "primary")),
         "telegram_channels": cfg.get("telegram_channel_filters", _env("TELEGRAM_CHANNEL_FILTERS")),
         "listener_keywords": cfg.get("listener_keywords", _env("LISTENER_KEYWORDS")),
+        "startup_history_days": cfg.get("startup_history_days", _env("LISTENER_STARTUP_HISTORY_DAYS", "0")),
         "notification_chat_id": cfg.get("notification_chat_id", _env("TELEGRAM_NOTIFICATION_CHAT_ID")),
         "clarification_mode": cfg.get("clarification_mode", "group"),
         "telegram_bot_token": _env("TELEGRAM_BOT_TOKEN"),
@@ -85,6 +86,7 @@ def save_settings(values: dict[str, str | bool]) -> None:
     merge_config_values({
         "telegram_channel_filters": str(values.get("telegram_channels", "")),
         "listener_keywords": str(values.get("listener_keywords", "")),
+        "startup_history_days": int(values.get("startup_history_days", 0)),
         "google_calendar_id": str(values.get("google_calendar_id", "primary")),
         "google_access_token": str(values.get("google_access_token", "")),
         "google_refresh_token": str(values.get("google_refresh_token", "")),
@@ -659,6 +661,8 @@ def action_save():
         values["telegram_channels"] = request.form["telegram_channels"].strip()
     if "listener_keywords" in request.form:
         values["listener_keywords"] = request.form["listener_keywords"].strip()
+    if "startup_history_days" in request.form:
+        values["startup_history_days"] = request.form["startup_history_days"].strip()
     if "google_calendar_id" in request.form:
         values["google_calendar_id"] = request.form["google_calendar_id"].strip() or "primary"
     

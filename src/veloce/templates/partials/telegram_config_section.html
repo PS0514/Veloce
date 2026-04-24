@@ -11,6 +11,12 @@
       <p class="muted" style="margin-top: 4px;">Comma-separated. Leave empty to process all messages.</p>
     </div>
 
+    <div style="margin-top: 10px;">
+      <label>Startup History Scan (Days)</label>
+      <input type="number" name="startup_history_days" placeholder="0" min="0" value="{{ values.startup_history_days }}" />
+      <p class="muted" style="margin-top: 4px;">How many days of history to scan when the service starts. Set to 0 to disable time-bound scan.</p>
+    </div>
+
     <div style="margin-top: 12px;">
       <label>Active Channel List</label>
       <textarea name="telegram_channels" placeholder="Examples: @course_updates, -1001234567890">{{ values.telegram_channels }}</textarea>

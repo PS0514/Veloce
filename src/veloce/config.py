@@ -14,6 +14,7 @@ class ListenerConfig:
     channel_usernames: Set[str]
     keywords: list[str]
     startup_history_limit: int
+    startup_history_days: int
     orchestrator_url: str | None
     db_path: str | None
     session_path: str
@@ -58,6 +59,7 @@ def load_listener_config() -> ListenerConfig:
     keywords_raw = get_config_value("listener_keywords") or os.getenv("LISTENER_KEYWORDS", "")
     channel_chat_ids, channel_usernames = parse_channel_filters(channels_raw)
     startup_history_limit = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_LIMIT", "10"), 10)
+    startup_history_days = parse_positive_int(os.getenv("LISTENER_STARTUP_HISTORY_DAYS", "0"), 0)
 
     orchestrator_url = os.getenv("VELOCE_ORCHESTRATOR_URL")
     webhook_url = orchestrator_url or os.getenv("N8N_WEBHOOK_URL")
@@ -80,6 +82,7 @@ def load_listener_config() -> ListenerConfig:
         channel_usernames=channel_usernames,
         keywords=parse_keywords(keywords_raw),
         startup_history_limit=startup_history_limit,
+        startup_history_days=startup_history_days,
         orchestrator_url=orchestrator_url,
         db_path=db_path,
         session_path=session_path,

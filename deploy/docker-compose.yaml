@@ -9,22 +9,61 @@ services:
       - "8000:8000"
     env_file:
       - ../.env
+    environment:
+      GLM_SERVICE_URL: http://glm_service:8001
+      CALENDAR_SERVICE_URL: http://calendar_service:8002
+      TELEGRAM_SERVICE_URL: http://telegram_service:8003
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - ..:/app
+    depends_on:
+      - glm_service
+      - calendar_service
+
+  glm_service:
+    build:
+      context: ..
+      dockerfile: deploy/glm.Dockerfile
+    container_name: veloce_glm
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - ../.env
     volumes:
       - ..:/app
     environment:
       TZ: Asia/Kuala_Lumpur
 
-  telegram_listener:
+  calendar_service:
     build:
       context: ..
-      dockerfile: deploy/listener.Dockerfile
-    container_name: veloce_listener
-    restart: on-failure:5
-    depends_on:
-      - orchestrator
+      dockerfile: deploy/calendar.Dockerfile
+    container_name: veloce_calendar
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
     env_file:
       - ../.env
+    volumes:
+      - ..:/app
     environment:
+      TZ: Asia/Kuala_Lumpur
+
+  telegram_service:
+    build:
+      context: ..
+      dockerfile: deploy/telegram.Dockerfile
+    container_name: veloce_telegram
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    env_file:
+      - ../.env
+    depends_on:
+      - orchestrator
+    environment:
+      # Use the service name 'orchestrator' so the container can find it in the Docker network
       VELOCE_ORCHESTRATOR_URL: http://orchestrator:8000/veloce-task-scheduler
       TZ: Asia/Kuala_Lumpur
     volumes:
