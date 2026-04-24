@@ -14,6 +14,9 @@ class SchedulerInbound(BaseModel):
     raw_text: str | None = None
     date: str | None = None
     timezone: str | None = None
+    reply_to_me: bool = False
+    reply_to_msg_id: int | None = None
+    reply_to_text: str | None = None
 
 
 class NormalizedInbound(BaseModel):
@@ -25,14 +28,17 @@ class NormalizedInbound(BaseModel):
     inbound_date: str
     timezone: str
     raw_text: str
+    reply_to_me: bool = False
+    reply_to_msg_id: int | None = None
+    reply_to_text: str | None = None
 
 
 class TaskCandidate(BaseModel):
-    task_name: str
-    deadline_iso: str
+    task_name: str = "Unnamed Task"
+    deadline_iso: str = ""
     start_time_iso: str | None = None  # NEW: For fixed-time events
-    estimated_duration_minutes: int = Field(ge=15)
-    confidence: float = Field(ge=0, le=1)
+    estimated_duration_minutes: int = Field(default=90, ge=15)
+    confidence: float = Field(default=0.5, ge=0, le=1)
     needs_clarification: bool = False
     clarification_question: str | None = None
 
@@ -76,6 +82,14 @@ class ContextIngestRequest(BaseModel):
     date: str | None = None
 
 
+class AutomatedMessageIngestRequest(BaseModel):
+    chat_id: int
+    message_id: int
+    bot_type: str  # 'userbot' or 'fatherbot'
+    trigger_msg_id: int | None = None
+    task_name: str | None = None
+
+
 class SchedulerResponse(BaseModel):
     ok: bool = True
     scheduled: bool
@@ -86,6 +100,9 @@ class SchedulerResponse(BaseModel):
     needs_clarification: bool = False
     clarification_question: str | None = None
     state: str
+    chat_title: str | None = None
+    source_chat_id: int | None = None
+    source_message_id: int | None = None
 
 
 class ManualCalendarAddRequest(BaseModel):

@@ -18,6 +18,25 @@ class ContextRow:
     date: str | None
 
 
+@dataclass(frozen=True)
+class ScheduledTaskRow:
+    task_name: str
+    start_time: str
+    end_time: str
+    calendar_event_id: str | None
+    chat_id: int | None
+    message_id: int | None
+
+
+@dataclass(frozen=True)
+class AutomatedMessageRow:
+    chat_id: int
+    message_id: int
+    bot_type: str  # 'userbot' or 'fatherbot'
+    trigger_msg_id: int | None = None
+    task_name: str | None = None
+
+
 class SQLiteStore:
     def __init__(self, db_path: str) -> None:
         path = Path(db_path)
@@ -52,8 +71,48 @@ class SQLiteStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_name TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT NOT NULL,
+                    calendar_event_id TEXT,
+                    chat_id INTEGER,
+                    message_id INTEGER,
+                    inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS automated_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    bot_type TEXT NOT NULL,
+                    trigger_msg_id INTEGER,
+                    task_name TEXT,
+                    inserted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(chat_id, message_id)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_telegram_context_chat_date
                 ON telegram_context(chat_id, date DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_start
+                ON scheduled_tasks(start_time DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_automated_messages_lookup
+                ON automated_messages(chat_id, message_id)
                 """
             )
             # FTS5 table for keyword retrieval while retaining base table source-of-truth.
@@ -125,6 +184,103 @@ class SQLiteStore:
                 source=row.source,
             )
             return inserted
+
+    def ingest_scheduled_task(self, row: ScheduledTaskRow) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO scheduled_tasks (
+                    task_name, start_time, end_time, calendar_event_id, chat_id, message_id
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row.task_name,
+                    row.start_time,
+                    row.end_time,
+                    row.calendar_event_id,
+                    row.chat_id,
+                    row.message_id,
+                ),
+            )
+            log_info(
+                logger,
+                "db_ingest_scheduled_task",
+                task_name=row.task_name,
+                start_time=row.start_time,
+            )
+            return cursor.rowcount > 0
+
+    def ingest_automated_message(self, row: AutomatedMessageRow) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO automated_messages (
+                    chat_id, message_id, bot_type, trigger_msg_id, task_name
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    row.chat_id,
+                    row.message_id,
+                    row.bot_type,
+                    row.trigger_msg_id,
+                    row.task_name,
+                ),
+            )
+            inserted = cursor.rowcount > 0
+            log_info(
+                logger,
+                "db_ingest_automated_message",
+                chat_id=row.chat_id,
+                message_id=row.message_id,
+                bot_type=row.bot_type,
+                inserted=inserted,
+            )
+            return inserted
+
+    def is_automated_message(self, chat_id: int, message_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM automated_messages WHERE chat_id = ? AND message_id = ?",
+                (chat_id, message_id),
+            ).fetchone()
+            return row is not None
+
+    def retrieve_trigger_id(self, chat_id: int, message_id: int) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT trigger_msg_id FROM automated_messages WHERE chat_id = ? AND message_id = ?",
+                (chat_id, message_id),
+            ).fetchone()
+            return row["trigger_msg_id"] if row else None
+
+    def retrieve_message(self, chat_id: int, message_id: int) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT chat_id, message_id, sender_id, chat_title, message, source, date FROM telegram_context WHERE chat_id = ? AND message_id = ?",
+                (chat_id, message_id),
+            ).fetchone()
+
+    def retrieve_scheduled_tasks(self, limit: int = 20) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT task_name, start_time, end_time, calendar_event_id, chat_id, message_id
+                FROM scheduled_tasks
+                ORDER BY start_time DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def retrieve_chat_id_by_title(self, title: str) -> int | None:
+        if not title:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT chat_id FROM telegram_context WHERE chat_title = ? LIMIT 1",
+                (title,),
+            ).fetchone()
+            return row["chat_id"] if row else None
 
     def retrieve_context(
         self,

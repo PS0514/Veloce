@@ -18,23 +18,42 @@ class GlmClient:
         self, 
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
-        request_id: Optional[str] = None
+        scheduled_tasks: Optional[List[dict]] = None,
+        request_id: Optional[str] = None,
+        conflict_context: Optional[str] = None
     ) -> GlmExtraction:
         url = f"{self.service_url}/extract"
         payload = {
             "inbound": inbound.dict(),
             "retrieved_context": [item.dict() for item in retrieved_context] if retrieved_context else None,
-            "request_id": request_id
+            "scheduled_tasks": scheduled_tasks,
+            "request_id": request_id,
+            "conflict_context": conflict_context
         }
         
         try:
-            resp = requests.post(url, json=payload, timeout=120)
+            resp = requests.post(url, json=payload, timeout=300)
             resp.raise_for_status()
             return GlmExtraction(**resp.json())
         except Exception as exc:
             log_warning(logger, "glm_client_remote_failed", error=str(exc))
             # Return empty extraction on failure to maintain legacy behavior
             return GlmExtraction(tasks=[], metadata={"error": str(exc), "remote": True})
+
+    def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
+        url = f"{self.service_url}/generate-brief"
+        payload = {
+            "events": events,
+            "now_iso": now_iso,
+            "timezone": timezone
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json().get("message", "")
+        except Exception as exc:
+            log_warning(logger, "glm_client_generate_brief_failed", error=str(exc))
+            return "Good morning! Hope you have a productive day."
 
 class _RateLimiter:
     """Legacy placeholder if needed by other imports."""

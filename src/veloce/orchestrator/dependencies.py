@@ -6,6 +6,7 @@ from veloce.orchestrator.glm_client import GlmClient
 from veloce.orchestrator.logging_utils import get_logger, log_info
 from veloce.orchestrator.pipeline import SchedulerPipeline
 from veloce.orchestrator.scheduling_engine import GoogleCalendarClient, SchedulingEngine
+from veloce.orchestrator.telegram_client import TelegramClient
 
 logger = get_logger(__name__)
 
@@ -18,6 +19,7 @@ class OrchestratorServices:
     calendar_client: GoogleCalendarClient
     scheduling_engine: SchedulingEngine
     pipeline: SchedulerPipeline
+    telegram_client: TelegramClient
 
 
 def build_services(db_path: str) -> OrchestratorServices:
@@ -27,7 +29,8 @@ def build_services(db_path: str) -> OrchestratorServices:
     glm_client = GlmClient()
     calendar_client = GoogleCalendarClient()
     scheduling_engine = SchedulingEngine(calendar_client=calendar_client)
-    pipeline = SchedulerPipeline(glm_client=glm_client, scheduling_engine=scheduling_engine)
+    pipeline = SchedulerPipeline(glm_client=glm_client, scheduling_engine=scheduling_engine, store=store)
+    telegram_client = TelegramClient()
 
     log_info(
         logger,
@@ -45,4 +48,5 @@ def build_services(db_path: str) -> OrchestratorServices:
         calendar_client=calendar_client,
         scheduling_engine=scheduling_engine,
         pipeline=pipeline,
+        telegram_client=telegram_client,
     )

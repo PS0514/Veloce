@@ -1,9 +1,8 @@
 Current time: {now}
 Timezone: {timezone}
 
-Recent Context History:
 {context_history}
----
+{scheduled_tasks}
 
 Input text:
 {raw_text}

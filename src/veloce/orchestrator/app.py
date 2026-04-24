@@ -1,15 +1,20 @@
+import asyncio
 import os
+import re
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, FastAPI, HTTPException
 
-from veloce.orchestrator.db import ContextRow
+from veloce.orchestrator.db import ContextRow, AutomatedMessageRow
 from veloce.orchestrator.dependencies import OrchestratorServices, build_services
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import (
     ContextIngestRequest,
+    AutomatedMessageIngestRequest,
     ContextRetrieveRequest,
     ContextRetrieveResponse,
     ManualCalendarAddRequest,
@@ -27,6 +32,84 @@ services: OrchestratorServices = build_services(DEFAULT_DB)
 router = APIRouter()
 
 
+async def daily_brief_logic() -> dict[str, str]:
+    """Core logic to generate the daily brief message."""
+    # 1. Get today's events from Calendar Service based on local timezone
+    tz = ZoneInfo(DEFAULT_TIMEZONE)
+    now_local = datetime.now(tz)
+    
+    # Start of the current local day (00:00:00)
+    start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    # End of the current local day (23:59:59)
+    end_of_day_local = start_of_day_local + timedelta(days=1)
+    
+    try:
+        events = services.calendar_client.list_events(
+            time_min=start_of_day_local, 
+            time_max=end_of_day_local
+        )
+    except Exception as exc:
+        log_warning(logger, "daily_brief_calendar_failed", error=str(exc))
+        events = []
+
+    # 2. Generate tailored brief using GLM
+    event_dicts = []
+    for e in events:
+        event_dicts.append({
+            "id": e.id,
+            "summary": e.summary,
+            "start": e.start.isoformat(),
+            "end": e.end.isoformat(),
+            "description": e.description,
+            "location": e.location
+        })
+
+    try:
+        message = services.glm_client.generate_brief(
+            events=event_dicts,
+            now_iso=now_local.isoformat(),
+            timezone=DEFAULT_TIMEZONE
+        )
+    except Exception as exc:
+        log_warning(logger, "daily_brief_glm_failed", error=str(exc))
+        message = "Good morning! I couldn't reach the AI for your brief, but hope you have a great day!"
+
+    return {"message": message}
+
+
+async def trigger_daily_brief():
+    """Generates the daily brief and sends it to Telegram."""
+    log_info(logger, "daily_brief_trigger_start")
+    try:
+        # We reuse the logic from the endpoint
+        brief_data = await daily_brief_logic()
+        message = brief_data.get("message")
+        if message:
+            # Inform the request and then send to telegram
+            res = await services.telegram_client.send_notification(message)
+            if isinstance(res, dict) and res.get("status") == "sent":
+                services.store.ingest_automated_message(
+                    AutomatedMessageRow(
+                        chat_id=res["chat_id"],
+                        message_id=res["message_id"],
+                        bot_type=res["bot_type"],
+                        task_name="Daily Brief"
+                    )
+                )
+            log_info(logger, "daily_brief_trigger_success")
+        else:
+            log_warning(logger, "daily_brief_trigger_no_message")
+    except Exception as exc:
+        log_warning(logger, "daily_brief_trigger_failed", error=str(exc))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Trigger daily brief on startup (informs the request)
+    asyncio.create_task(trigger_daily_brief())
+    yield
+
+
 def _request_id(*, source: str | None, chat_id: int | None, message_id: int | None) -> str:
     source_part = (source or "unknown").strip() or "unknown"
     chat_part = str(chat_id) if chat_id is not None else "na"
@@ -35,9 +118,10 @@ def _request_id(*, source: str | None, chat_id: int | None, message_id: int | No
 
 
 def _create_app() -> FastAPI:
-    app = FastAPI(title="Veloce Orchestrator", version="0.1.0")
+    app = FastAPI(title="Veloce Orchestrator", version="0.1.0", lifespan=lifespan)
     app.include_router(router)
     return app
+
 
 @router.get("/health")
 def health() -> dict[str, str]:
@@ -122,6 +206,34 @@ def telegram_context_retrieve(payload: ContextRetrieveRequest) -> ContextRetriev
     return response
 
 
+@router.post("/telegram-automated-message-ingest")
+def telegram_automated_message_ingest(
+    payload: AutomatedMessageIngestRequest | list[AutomatedMessageIngestRequest]
+) -> dict[str, object] | list[dict[str, object]]:
+    def _process_single(item: AutomatedMessageIngestRequest) -> dict[str, object]:
+        log_info(
+            logger,
+            "automated_message_ingest_received",
+            chat_id=item.chat_id,
+            message_id=item.message_id,
+            bot_type=item.bot_type,
+        )
+        inserted = services.store.ingest_automated_message(
+            AutomatedMessageRow(
+                chat_id=item.chat_id,
+                message_id=item.message_id,
+                bot_type=item.bot_type,
+                trigger_msg_id=item.trigger_msg_id,
+                task_name=item.task_name,
+            )
+        )
+        return {"ok": True, "inserted": inserted}
+
+    if isinstance(payload, list):
+        return [_process_single(item) for item in payload]
+    return _process_single(payload)
+
+
 @router.post("/veloce-task-scheduler", response_model=SchedulerResponse | list[SchedulerResponse])
 def veloce_task_scheduler(
     payload: SchedulerInbound | list[SchedulerInbound]
@@ -131,7 +243,7 @@ def veloce_task_scheduler(
     if not inbounds:
         return []
 
-    # 1. Group messages by chat_id
+    # 1. Group messages by chat_id FIRST
     grouped_inbounds = defaultdict(list)
     for item in inbounds:
         chat_id = item.chat_id or "unknown_chat"
@@ -139,18 +251,42 @@ def veloce_task_scheduler(
 
     all_results: list[SchedulerResponse] = []
 
-    # 2. Process each chat group as a single batch
+    # 2. Process each chat group
     for chat_id, group in grouped_inbounds.items():
-        # Sort chronologically just in case
+        # Sort chronologically
         group.sort(key=lambda x: x.date or "")
         
+        filtered_group = []
+        for item in group:
+            # STRICT DROP: Never treat automated messages as part of the user's command batch.
+            # (Context is safely handled via reply_to_text and trigger DB lookups).
+            if item.chat_id and item.message_id:
+                if services.store.is_automated_message(item.chat_id, item.message_id):
+                    log_info(logger, "scheduler_skipping_automated_message_strict", chat_id=item.chat_id, message_id=item.message_id)
+                    continue
+
+            # Fallback for bot messages not in the automated_messages table
+            if getattr(item, "is_bot", False):
+                log_info(logger, "scheduler_skipping_automated_message_fallback_strict", chat_id=item.chat_id, message_id=item.message_id)
+                continue
+            
+            filtered_group.append(item)
+
+        if not filtered_group:
+            continue
+
         # Combine the text to feed the AI
         combined_text = "\n".join(
-            [f"[{item.date}] User {item.sender_id}: {item.message or item.raw_text}" for item in group]
+            [f"[{item.date}] User {item.sender_id}: {item.message or item.raw_text}" for item in filtered_group]
         )
         
+        # Check if any message in the batch was a reply to me
+        reply_to_me = any(item.reply_to_me for item in filtered_group)
+        reply_to_msg_id = next((item.reply_to_msg_id for item in filtered_group if item.reply_to_me), None)
+        reply_to_text = next((item.reply_to_text for item in filtered_group if item.reply_to_me), None)
+
         # Create a "Merged" inbound representing the whole conversation batch
-        representative_item = group[-1] # Use the latest item for metadata
+        representative_item = filtered_group[-1] # Use the latest remaining item for metadata
         merged_inbound = NormalizedInbound(
             source=representative_item.source or "telegram_userbot",
             message_id=representative_item.message_id,
@@ -160,6 +296,9 @@ def veloce_task_scheduler(
             inbound_date=representative_item.date or datetime.now(timezone.utc).isoformat(),
             timezone=representative_item.timezone or DEFAULT_TIMEZONE,
             raw_text=combined_text,
+            reply_to_me=reply_to_me,
+            reply_to_msg_id=reply_to_msg_id,
+            reply_to_text=reply_to_text,
         )
 
         req_id = _request_id(
@@ -180,13 +319,31 @@ def veloce_task_scheduler(
         context_items = []
         if merged_inbound.chat_id is not None:
             retrieval_started = time.perf_counter()
-            retrieved = services.context_service.retrieve(
+            
+            # 1. Semantic Search: Find messages matching the keywords
+            retrieved_semantic = services.context_service.retrieve(
                 chat_id=merged_inbound.chat_id,
                 query=combined_text.strip().lower(),
-                limit=8,
+                limit=5,
                 since=None,
             )
-            context_items = retrieved.items
+            
+            # 2. Chronological Search: ALWAYS fetch the last few messages 
+            # This guarantees the AI sees the bot's recent questions even if you just say "yes"
+            retrieved_recent = services.context_service.retrieve(
+                chat_id=merged_inbound.chat_id,
+                query="", # Empty query triggers chronological fallback in db.py
+                limit=5,
+                since=None,
+            )
+            
+            # Combine and deduplicate
+            existing_ids = set()
+            for item in retrieved_semantic.items + retrieved_recent.items:
+                if item.message_id not in existing_ids:
+                    context_items.append(item)
+                    existing_ids.add(item.message_id)
+            
             retrieval_elapsed_ms = int((time.perf_counter() - retrieval_started) * 1000)
             log_info(
                 logger,
@@ -196,6 +353,118 @@ def veloce_task_scheduler(
                 items=len(context_items),
                 elapsed_ms=retrieval_elapsed_ms,
             )
+
+        # 3b. If it's a reply, explicitly fetch recent history to guarantee context
+        if merged_inbound.reply_to_me and merged_inbound.chat_id is not None:
+            # First, fetch local history (the DM or the same group)
+            history_started = time.perf_counter()
+            recent_history = services.context_service.retrieve(
+                chat_id=merged_inbound.chat_id,
+                query="", # Triggers chronological fallback
+                limit=15,
+                since=None,
+            )
+            history_elapsed_ms = int((time.perf_counter() - history_started) * 1000)
+            
+            existing_ids = {item.message_id for item in context_items}
+            added_count = 0
+            for item in recent_history.items:
+                if item.message_id not in existing_ids:
+                    context_items.append(item)
+                    added_count += 1
+            
+            log_info(
+                logger,
+                "scheduler_reply_history_added",
+                request_id=req_id,
+                chat_id=merged_inbound.chat_id,
+                added=added_count,
+                elapsed_ms=history_elapsed_ms,
+            )
+
+            # SECOND: Extract EXACT original source context using trigger DB tracking
+            if merged_inbound.reply_to_msg_id:
+                trigger_context = services.context_service.retrieve_trigger_context(
+                    chat_id=merged_inbound.chat_id,
+                    automated_msg_id=merged_inbound.reply_to_msg_id
+                )
+                if trigger_context:
+                    existing_ids = {item.message_id for item in context_items}
+                    added_trigger_count = 0
+                    for item in trigger_context:
+                        if item.message_id not in existing_ids:
+                            context_items.append(item)
+                            added_trigger_count += 1
+                    log_info(logger, "scheduler_trigger_context_added", request_id=req_id, added=added_trigger_count)
+            
+            # THIRD: Fallback to [Ref:...] tag if DB lookup failed or for cross-chat replies
+            if merged_inbound.reply_to_text:
+                # Look for our hidden tracker: [Ref:chat_id:message_id]
+                ref_match = re.search(r"\[Ref:(-?\d+):(\d+)\]", merged_inbound.reply_to_text)
+                
+                if ref_match:
+                    source_chat_id = int(ref_match.group(1))
+                    source_message_id = int(ref_match.group(2))
+                    
+                    try:
+                        # Retrieve the surrounding context from the original group
+                        source_history = services.context_service.retrieve(
+                            chat_id=source_chat_id,
+                            query="", # Last messages from original group
+                            limit=10, 
+                            since=None,
+                        )
+                        
+                        added_source_count = 0
+                        for item in source_history.items:
+                            # We don't check existing_ids because message_ids might overlap across different chats
+                            # but the LLM will handle the context block
+                            context_items.append(item)
+                            added_source_count += 1
+                            
+                        log_info(
+                            logger,
+                            "scheduler_source_context_added_via_ref",
+                            request_id=req_id,
+                            source_chat_id=source_chat_id,
+                            target_message_id=source_message_id,
+                            added=added_source_count,
+                        )
+                    except Exception as exc:
+                        log_warning(logger, "scheduler_source_ref_lookup_failed", error=str(exc))
+                
+                # Fallback to Source: title matching if Ref: is missing (for backward compatibility)
+                elif "Source: " in merged_inbound.reply_to_text:
+                    try:
+                        # Extract title from "Source: My Group Name"
+                        source_title = merged_inbound.reply_to_text.split("Source: ")[-1].strip().split("\n")[0]
+                        source_chat_id = services.store.retrieve_chat_id_by_title(source_title)
+                        
+                        if source_chat_id and source_chat_id != merged_inbound.chat_id:
+                            source_history = services.context_service.retrieve(
+                                chat_id=source_chat_id,
+                                query="", 
+                                limit=10,
+                                since=None,
+                            )
+                            added_source_count = 0
+                            for item in source_history.items:
+                                context_items.append(item)
+                                added_source_count += 1
+                            
+                            log_info(
+                                logger,
+                                "scheduler_source_context_added_via_title",
+                                request_id=req_id,
+                                source_title=source_title,
+                                source_chat_id=source_chat_id,
+                                added=added_source_count,
+                            )
+                    except Exception as exc:
+                        log_warning(logger, "scheduler_source_title_lookup_failed", error=str(exc))
+
+                # --- NEW FIX: Strip the Ref tag so it doesn't confuse the AI pipeline ---
+                merged_inbound.reply_to_text = re.sub(r"\[Ref:(-?\d+):(\d+)\]", "", merged_inbound.reply_to_text).strip()
 
         # Run the pipeline for the merged block of text
         pipeline_started = time.perf_counter()
@@ -348,6 +617,11 @@ def veloce_manual_calendar_add(payload: ManualCalendarAddRequest) -> ManualCalen
         date=start_raw.split("T")[0] if start_raw else None,
         time=start_raw.split("T")[1] if "T" in start_raw else None,
     )
+
+
+@router.get("/daily-brief")
+async def daily_brief() -> dict[str, str]:
+    return await daily_brief_logic()
 
 
 app = _create_app()

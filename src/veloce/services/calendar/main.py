@@ -11,7 +11,8 @@ from veloce.orchestrator.scheduling_engine import (
     GoogleCalendarClient, 
     SchedulingEngine, 
     ScheduleResult,
-    BusyInterval
+    BusyInterval,
+    CalendarEvent
 )
 
 logger = get_logger(__name__)
@@ -33,9 +34,9 @@ class CreateEventRequest(BaseModel):
 class QuickAddRequest(BaseModel):
     text: str
 
-# Instantiate the engine
-calendar_client = GoogleCalendarClient()
-scheduling_engine = SchedulingEngine(calendar_client)
+# Instantiate the engine in local mode to avoid circular proxy calls
+calendar_client = GoogleCalendarClient(force_local=True)
+scheduling_engine = SchedulingEngine(calendar_client, force_local=True)
 
 @app.get("/health")
 def health():
@@ -88,6 +89,28 @@ def list_busy_intervals(time_min: datetime, time_max: datetime):
         return intervals
     except Exception as exc:
         log_warning(logger, "calendar_service_busy_intervals_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.get("/list-events", response_model=List[CalendarEvent])
+def list_events(time_min: datetime, time_max: datetime):
+    try:
+        events = calendar_client.list_events(time_min=time_min, time_max=time_max)
+        return events
+    except Exception as exc:
+        log_warning(logger, "calendar_service_list_events_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@app.post("/check-availability", response_model=List[BusyInterval])
+def check_availability(payload: ScheduleRequest):
+    try:
+        overlaps = scheduling_engine.check_availability(
+            task=payload.task,
+            timezone_name=payload.timezone_name,
+            ephemeral_busy_slots=payload.ephemeral_busy_slots
+        )
+        return overlaps
+    except Exception as exc:
+        log_warning(logger, "calendar_service_check_availability_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
 
 if __name__ == "__main__":

@@ -59,7 +59,14 @@ app = FastAPI(title="Veloce GLM Service", version="0.1.0")
 class ExtractRequest(BaseModel):
     inbound: NormalizedInbound
     retrieved_context: Optional[List[ContextItem]] = None
+    scheduled_tasks: Optional[List[dict]] = None
     request_id: Optional[str] = None
+    conflict_context: Optional[str] = None
+
+class BriefRequest(BaseModel):
+    events: List[dict]
+    now_iso: str
+    timezone: str
 
 class GlmService:
     def __init__(self) -> None:
@@ -89,10 +96,12 @@ class GlmService:
         self, 
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
-        request_id: Optional[str] = None
+        scheduled_tasks: Optional[List[dict]] = None,
+        request_id: Optional[str] = None,
+        conflict_context: Optional[str] = None
     ) -> GlmExtraction:
         try:
-            return self._extract_tasks_internal(inbound, retrieved_context, request_id)
+            return self._extract_tasks_internal(inbound, retrieved_context, scheduled_tasks, request_id, conflict_context)
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
@@ -103,7 +112,9 @@ class GlmService:
         self, 
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
-        request_id: Optional[str] = None
+        scheduled_tasks: Optional[List[dict]] = None,
+        request_id: Optional[str] = None,
+        conflict_context: Optional[str] = None
     ) -> GlmExtraction:
         if not self.api_key or self._client is None:
             return self._fallback_extraction(inbound, request_id=request_id)
@@ -131,11 +142,30 @@ class GlmService:
             context_lines.append("---") 
             context_str = "\n".join(context_lines)
 
+        scheduled_str = ""
+        if scheduled_tasks:
+            scheduled_lines = ["Already Scheduled Tasks (DB):"]
+            for task in scheduled_tasks:
+                scheduled_lines.append(f"- {task['task_name']} at {task['start_time']} to {task['end_time']}")
+            scheduled_lines.append("---")
+            scheduled_str = "\n".join(scheduled_lines)
+
+        # Append conflict context if provided
+        raw_text = inbound.raw_text
+        if conflict_context:
+            raw_text += f"\n\n[Conflict Context]:\n{conflict_context}"
+
+        # Add reply metadata to the prompt
+        reply_info = ""
+        if inbound.reply_to_me:
+            reply_info = f"\n\n[METADATA]: The user is DIRECTLY REPLYING to your previous message (Message ID: {inbound.reply_to_msg_id}).\nOriginal message from you: \"{inbound.reply_to_text}\"\nThis is likely a response to your question above."
+
         user_prompt = user_prompt_template.format(
             now=now,
             timezone=inbound.timezone,
             context_history=context_str,
-            raw_text=inbound.raw_text
+            scheduled_tasks=scheduled_str,
+            raw_text=raw_text + reply_info
         )
 
         log_info(
@@ -226,17 +256,25 @@ class GlmService:
         raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
         tasks: List[TaskCandidate] = []
         for item in raw_tasks:
-            tasks.append(
-                TaskCandidate(
-                    task_name=item.get("task_name", ""),
-                    deadline_iso=item.get("deadline_iso", ""),
-                    start_time_iso=item.get("start_time_iso"),
-                    estimated_duration_minutes=item.get("estimated_duration_minutes", 90),
-                    confidence=item.get("confidence", 0.5),
-                    needs_clarification=bool(item.get("needs_clarification", False)),
-                    clarification_question=item.get("clarification_question"),
+            if not isinstance(item, dict):
+                continue
+            try:
+                # Use 'or' to handle None values and provide sensible defaults
+                # Use explicit type casting to ensure Pydantic validation passes
+                tasks.append(
+                    TaskCandidate(
+                        task_name=str(item.get("task_name") or "Unnamed Task"),
+                        deadline_iso=str(item.get("deadline_iso") or ""),
+                        start_time_iso=item.get("start_time_iso"),
+                        estimated_duration_minutes=int(item.get("estimated_duration_minutes") or 90),
+                        confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.5),
+                        needs_clarification=bool(item.get("needs_clarification", False)),
+                        clarification_question=item.get("clarification_question"),
+                    )
                 )
-            )
+            except Exception as e:
+                log_warning(logger, "glm_task_parse_item_error", error=str(e), item=item, request_id=request_id)
+                continue
 
         log_info(
             logger,
@@ -259,6 +297,104 @@ class GlmService:
         log_warning(logger, "glm_fallback", request_id=request_id, reason="missing_config")
         return GlmExtraction(tasks=[], metadata={"fallback": True})
 
+    def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
+        if not self.api_key or self._client is None:
+            return "Good morning! Hope you have a great day."
+
+        # Attempt to load timezone
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(timezone)
+        except Exception:
+            tz = None
+
+        event_lines = []
+        for e in events:
+            # e is a dict representation of CalendarEvent
+            raw_start = e["start"]
+            start_dt = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+            
+            # Convert to local timezone if possible
+            if tz and start_dt.tzinfo:
+                start_dt = start_dt.astimezone(tz)
+            
+            # Heuristic for all-day events: Google returns 'YYYY-MM-DD' for 'date'
+            # which fromisoformat turns into midnight. 
+            # If the original string didn't have a 'T', it's likely an all-day event.
+            if "T" not in raw_start:
+                time_str = "All Day"
+            else:
+                time_str = start_dt.strftime("%H:%M")
+
+            summary = e.get("summary", "Busy")
+            desc = e.get("description")
+            line = f"- {time_str}: {summary}"
+            if desc:
+                # Keep description short
+                clean_desc = desc.split("\n")[0][:100]
+                line += f" ({clean_desc})"
+            event_lines.append(line)
+        
+        events_str = "\n".join(event_lines) if event_lines else "No events scheduled."
+        
+        system_prompt = (
+            "You are Veloce, a high-performance AI task orchestrator. Your goal is to provide a warm, "
+            "motivating daily brief. Follow this exact template structure:\n\n"
+            "1. GREETING: Start with a warm, time-aware greeting.\n"
+            "2. SCHEDULE SUMMARY: Naturally summarize the day's events. If there are no events, provide a cheerful 'clear skies' message.\n"
+            "3. VELOCE INSIGHT: Provide one specific piece of productivity advice or a healthy habit tip.\n"
+            "4. CLOSING: End with a short, motivating one-liner.\n\n"
+            "Keep the tone professional yet friendly and energetic. Remove the GREETING, SCHEDULE SUMMARY, VELOCE INSIGHT, and CLOSING labels from the final output."
+        )
+        user_prompt = (
+            f"Current Time: {now_iso}. Timezone: {timezone}.\n\n"
+            f"Today's Schedule:\n{events_str}\n\n"
+            "Please generate my daily brief using the Veloce template."
+        )
+
+        try:
+            started = time.perf_counter()
+            self._rate_limiter.acquire()
+
+            log_info(logger, "glm_generate_brief_payload", system_prompt=system_prompt, user_prompt=user_prompt)
+
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=2048,
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+
+            # Detailed logging to diagnose 'null' responses
+            choice = response.choices[0] if response.choices else None
+            finish_reason = getattr(choice, "finish_reason", "unknown") if choice else "no_choice"
+            raw_content = choice.message.content if choice and choice.message else None
+
+            log_info(
+                logger, 
+                "glm_generate_brief_response_received", 
+                elapsed_ms=elapsed_ms, 
+                finish_reason=finish_reason,
+                has_content=raw_content is not None,
+                raw_response=raw_content
+            )
+
+            content = raw_content
+            if content:
+                content = content.strip()
+            else:
+                content = f"Good morning! Here are your events for today:\n\n{events_str}"
+            
+            log_info(logger, "glm_generate_brief_done", elapsed_ms=elapsed_ms, content=content)
+            return content
+        except Exception as exc:
+            log_warning(logger, "glm_generate_brief_failed", error=str(exc))
+            return f"Good morning! Here are your events for today:\n\n{events_str}"
+
 glm_service = GlmService()
 
 @app.get("/health")
@@ -270,8 +406,19 @@ def extract(payload: ExtractRequest):
     return glm_service.extract_tasks(
         inbound=payload.inbound,
         retrieved_context=payload.retrieved_context,
-        request_id=payload.request_id
+        scheduled_tasks=payload.scheduled_tasks,
+        request_id=payload.request_id,
+        conflict_context=payload.conflict_context
     )
+
+@app.post("/generate-brief")
+def generate_brief(payload: BriefRequest):
+    message = glm_service.generate_brief(
+        events=payload.events,
+        now_iso=payload.now_iso,
+        timezone=payload.timezone
+    )
+    return {"message": message}
 
 if __name__ == "__main__":
     import uvicorn

@@ -36,6 +36,10 @@ class ContextService:
 
         return round((0.7 * text_match) + (0.3 * recency_weight), 4)
 
+    def retrieve_scheduled(self, limit: int = 10) -> list[dict]:
+        rows = self.store.retrieve_scheduled_tasks(limit=limit)
+        return [dict(row) for row in rows]
+
     def retrieve(
         self,
         *,
@@ -88,3 +92,35 @@ class ContextService:
             returned=len(top),
             items=top,
         )
+
+    def retrieve_trigger_context(self, chat_id: int, automated_msg_id: int) -> list[ContextItem]:
+        """Retrieves the context surrounding the message that triggered an automated response."""
+        trigger_id = self.store.retrieve_trigger_id(chat_id, automated_msg_id)
+        if not trigger_id:
+            return []
+        
+        # We find the trigger message and maybe a few before it
+        # Since retrieve_context uses 'since', we might just find the exact message
+        # But let's be smarter: get messages around that trigger_id
+        
+        log_info(logger, "context_retrieve_trigger", chat_id=chat_id, trigger_id=trigger_id)
+        
+        # Currently our DB doesn't support "get messages around X", 
+        # but we can fetch context with an empty query and high limit, then filter.
+        # Or better: Add a simple fetch for the exact message first.
+        
+        trigger_row = self.store.retrieve_message(chat_id, trigger_id)
+        if not trigger_row:
+            return []
+            
+        return [
+            ContextItem(
+                message_id=trigger_row["message_id"],
+                sender_id=trigger_row["sender_id"],
+                chat_title=trigger_row["chat_title"],
+                message=trigger_row["message"],
+                date=trigger_row["date"],
+                source=trigger_row["source"],
+                score=1.0,
+            )
+        ]

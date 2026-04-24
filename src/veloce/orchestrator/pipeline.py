@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
+from veloce.orchestrator.db import SQLiteStore, ScheduledTaskRow
 from veloce.orchestrator.glm_client import GlmClient
-from veloce.orchestrator.scheduling_engine import BusyInterval
+from veloce.orchestrator.scheduling_engine import BusyInterval, SchedulingEngine
 from veloce.orchestrator.logging_utils import get_logger, log_info
 from veloce.orchestrator.models import (
     ContextItem,
@@ -10,7 +11,6 @@ from veloce.orchestrator.models import (
     SchedulerResponse,
     TaskCandidate,
 )
-from veloce.orchestrator.scheduling_engine import SchedulingEngine
 
 logger = get_logger(__name__)
 
@@ -20,10 +20,12 @@ class SchedulerPipeline:
         self,
         glm_client: GlmClient,
         scheduling_engine: SchedulingEngine,
+        store: SQLiteStore | None = None,
         min_confidence_for_auto: float = 0.7,
     ) -> None:
         self.glm_client = glm_client
         self.scheduling_engine = scheduling_engine
+        self.store = store
         self.min_confidence_for_auto = min_confidence_for_auto
 
     @staticmethod
@@ -41,6 +43,9 @@ class SchedulerPipeline:
             inbound_date=payload.date or datetime.now(timezone.utc).isoformat(),
             timezone=payload.timezone or default_timezone,
             raw_text=raw_text,
+            reply_to_me=payload.reply_to_me,
+            reply_to_msg_id=payload.reply_to_msg_id,
+            reply_to_text=payload.reply_to_text,
         )
 
     @staticmethod
@@ -95,9 +100,16 @@ class SchedulerPipeline:
             source=inbound.source,
             chat_id=inbound.chat_id,
         )
+
+        # Retrieve already scheduled tasks from DB for AI context
+        scheduled_tasks = []
+        if self.store:
+            scheduled_tasks = [dict(row) for row in self.store.retrieve_scheduled_tasks(limit=15)]
+
         extraction = self.glm_client.extract_tasks(
             inbound, 
             retrieved_context=retrieved_context, 
+            scheduled_tasks=scheduled_tasks,
             request_id=request_id
         )
         log_info(
@@ -131,21 +143,34 @@ class SchedulerPipeline:
             )
 
             if task.needs_clarification or task.confidence < self.min_confidence_for_auto:
-                question = task.clarification_question or "I need a bit more detail before scheduling this."
+                # Check availability anyway to provide a better question
+                overlaps = self.scheduling_engine.check_availability(
+                    task=task,
+                    timezone_name=inbound.timezone,
+                    ephemeral_busy_slots=ephemeral_busy_slots
+                )
+                
+                status_msg = "You are free!" if not overlaps else f"You have a conflict with '{overlaps[0].summary}'."
+                question = task.clarification_question or f"I found this task. {status_msg} Should I schedule it?"
+                
                 logger.info(
-                    "pipeline_needs_clarification request_id=%s task=%s reason=confidence_or_flag confidence=%.2f min=%.2f",
+                    "pipeline_needs_clarification request_id=%s task=%s reason=confidence_or_flag confidence=%.2f min=%.2f overlaps=%d",
                     request_id,
                     task.task_name,
                     task.confidence,
                     self.min_confidence_for_auto,
+                    len(overlaps)
                 )
                 results.append(SchedulerResponse(
                     scheduled=False,
                     selected_task=task,
                     needs_clarification=True,
                     clarification_question=question,
-                    reason="Needs clarification before scheduling",
+                    reason=f"Needs clarification. {status_msg}",
                     state="needs_clarification",
+                    chat_title=inbound.chat_title,
+                    source_chat_id=inbound.chat_id,
+                    source_message_id=inbound.message_id,
                 ))
                 continue
 
@@ -164,6 +189,9 @@ class SchedulerPipeline:
                     clarification_question="I could not find enough context. Can you confirm the exact deadline and duration?",
                     reason="More context needed",
                     state="decision_needs_context",
+                    chat_title=inbound.chat_title,
+                    source_chat_id=inbound.chat_id,
+                    source_message_id=inbound.message_id,
                 ))
                 continue
 
@@ -173,6 +201,68 @@ class SchedulerPipeline:
                 request_id=request_id,
                 ephemeral_busy_slots=ephemeral_busy_slots
             )
+
+            # OPTIMIZATION: If conflict detected, let GLM help resolve it
+            if schedule_result.state == "conflict_detected" and schedule_result.conflicting_intervals:
+                log_info(logger, "pipeline_conflict_resolution_attempt", request_id=request_id, task=task.task_name)
+                
+                # Format conflict context for GLM
+                conflict_desc = []
+                for idx, busy in enumerate(schedule_result.conflicting_intervals):
+                    # Robustly handle both objects and dicts
+                    if hasattr(busy, "start"):
+                        b_start = busy.start
+                        b_end = busy.end
+                        b_summary = busy.summary
+                    else:
+                        # Fallback for dicts if reconstruction failed or skipped
+                        b_start = datetime.fromisoformat(busy["start"].replace("Z", "+00:00"))
+                        b_end = datetime.fromisoformat(busy["end"].replace("Z", "+00:00"))
+                        b_summary = busy.get("summary", "Busy")
+                        
+                    busy_start_str = b_start.strftime("%H:%M")
+                    busy_end_str = b_end.strftime("%H:%M")
+                    conflict_desc.append(f"{idx+1}. '{b_summary}' from {busy_start_str} to {busy_end_str}")
+                
+                conflict_context = "CRITICAL: The following schedule conflicts were detected:\n" + "\n".join(conflict_desc)
+                conflict_context += "\n\nPlease determine if the task should be rescheduled to a different time or if I should ask the user for a preference."
+
+                # Call GLM again with the conflict information
+                resolution_extraction = self.glm_client.extract_tasks(
+                    inbound=inbound,
+                    retrieved_context=retrieved_context,
+                    request_id=request_id,
+                    conflict_context=conflict_context
+                )
+
+                if resolution_extraction.tasks:
+                    # Use the first suggestion from GLM
+                    suggested_task = resolution_extraction.tasks[0]
+                    log_info(
+                        logger, 
+                        "pipeline_conflict_resolution_suggestion", 
+                        request_id=request_id, 
+                        task=task.task_name,
+                        new_start=suggested_task.start_time_iso,
+                        needs_clarification=suggested_task.needs_clarification
+                    )
+                    
+                    # Update the task with GLM's suggestion
+                    # If GLM suggested a different time, we can either return it for confirmation or try one more time.
+                    # For now, let's return it as a clarification/suggestion to the user.
+                    results.append(SchedulerResponse(
+                        scheduled=False,
+                        selected_task=suggested_task,
+                        reason=f"Conflict detected. AI suggests: {suggested_task.clarification_question or 'Rescheduling'}",
+                        state="conflict_resolved_suggestion",
+                        needs_clarification=True,
+                        clarification_question=suggested_task.clarification_question or f"I found a conflict with {schedule_result.conflicting_intervals[0].summary}. Should I move it to {suggested_task.start_time_iso}?",
+                        chat_title=inbound.chat_title,
+                        source_chat_id=inbound.chat_id,
+                        source_message_id=inbound.message_id,
+                    ))
+                    continue
+
             log_info(
                 logger,
                 "pipeline_schedule_done",
@@ -197,6 +287,19 @@ class SchedulerPipeline:
                 except ValueError:
                     logger.warning("Failed to parse proposed times for ephemeral memory")
 
+                # Save to persistent DB storage
+                if self.store:
+                    self.store.ingest_scheduled_task(
+                        ScheduledTaskRow(
+                            task_name=task.task_name,
+                            start_time=schedule_result.proposed_start,
+                            end_time=schedule_result.proposed_end,
+                            calendar_event_id=schedule_result.calendar_event_id,
+                            chat_id=inbound.chat_id,
+                            message_id=inbound.message_id,
+                        )
+                    )
+
             results.append(SchedulerResponse(
                 scheduled=schedule_result.scheduled,
                 selected_task=task,
@@ -206,6 +309,9 @@ class SchedulerPipeline:
                 calendar_link=schedule_result.calendar_link,
                 needs_clarification=schedule_result.needs_clarification,
                 clarification_question=schedule_result.clarification_question,
+                chat_title=inbound.chat_title,
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
             ))
         
         return results

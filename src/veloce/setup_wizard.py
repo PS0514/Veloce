@@ -1055,7 +1055,7 @@ def launch_browser() -> None:
 
 def run_setup_wizard() -> None:
     log_info(logger, "setup_wizard_start", url="http://127.0.0.1:8765")
-    threading.Timer(1.0, launch_browser).start()
+    # threading.Timer(1.0, launch_browser).start()
     APP.run(host="127.0.0.1", port=8765, debug=False)
 
 
