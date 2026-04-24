@@ -33,11 +33,12 @@ class ScheduleResult:
 
 class GoogleCalendarClient:
     def __init__(self) -> None:
-        self.service_url = os.getenv("CALENDAR_SERVICE_URL", "http://localhost:8002").rstrip("/")
-        # We still need 'enabled' for some local checks in app.py
-        # We can fetch this from the service's health check or just use an env var
+        # Prioritize environment variable, then fallback to docker name, then localhost
+        self.service_url = os.getenv("CALENDAR_SERVICE_URL") or "http://calendar_service:8002"
+        self.service_url = self.service_url.rstrip("/")
         self.enabled = os.getenv("ENABLE_GOOGLE_SYNC", "true").lower() == "true"
         self.calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+        log_info(logger, "calendar_client_init", service_url=self.service_url)
 
     def create_event(self, *, task: TaskCandidate, start: datetime, end: datetime, timezone_name: str) -> dict:
         url = f"{self.service_url}/create-event"
@@ -93,7 +94,8 @@ class SchedulingEngine:
             ]
         }
         try:
-            resp = requests.post(url, json=payload, timeout=60)
+            # Increase timeout to 120s
+            resp = requests.post(url, json=payload, timeout=120)
             resp.raise_for_status()
             data = resp.json()
             return ScheduleResult(**data)

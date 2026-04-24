@@ -9,7 +9,8 @@ logger = get_logger(__name__)
 
 class GlmClient:
     def __init__(self) -> None:
-        self.service_url = os.getenv("GLM_SERVICE_URL", "http://localhost:8001").rstrip("/")
+        self.service_url = os.getenv("GLM_SERVICE_URL") or "http://glm_service:8001"
+        self.service_url = self.service_url.rstrip("/")
         self.model = os.getenv("ILMU_MODEL", "ilmu-glm-5.1") # For backward compatibility in logs
         log_info(logger, "glm_client_init_remote", service_url=self.service_url)
 

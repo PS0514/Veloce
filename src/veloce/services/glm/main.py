@@ -75,6 +75,7 @@ class GlmService:
             self._client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
+                timeout=180.0,
             )
         
         log_info(
@@ -85,6 +86,20 @@ class GlmService:
         )
 
     def extract_tasks(
+        self, 
+        inbound: NormalizedInbound, 
+        retrieved_context: Optional[List[ContextItem]] = None, 
+        request_id: Optional[str] = None
+    ) -> GlmExtraction:
+        try:
+            return self._extract_tasks_internal(inbound, retrieved_context, request_id)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            log_warning(logger, "glm_extraction_critical_error", request_id=request_id, error=str(e), traceback=error_trace)
+            raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
+
+    def _extract_tasks_internal(
         self, 
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
@@ -140,24 +155,74 @@ class GlmService:
         started = time.perf_counter()
         self._rate_limiter.acquire(request_id=request_id)
 
-        try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.1,
-                response_format={"type": "json_object"},
-            )
-        except Exception as exc:
-            log_warning(logger, "glm_request_failed", request_id=request_id, error=str(exc))
-            raise HTTPException(status_code=500, detail=f"GLM request failed: {exc}")
+        # Exponential backoff for 504/transient errors
+        max_retries = 3
+        retry_delay = 2.0  # start with 2 seconds
+        response = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
+                break # Success!
+            except Exception as exc:
+                is_timeout = "504" in str(exc) or "timeout" in str(exc).lower()
+                if is_timeout and attempt < max_retries:
+                    log_warning(
+                        logger, 
+                        "glm_request_retry", 
+                        attempt=attempt + 1, 
+                        delay=retry_delay, 
+                        error=str(exc),
+                        request_id=request_id
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                
+                # If not a timeout or we ran out of retries, re-raise
+                log_warning(logger, "glm_request_failed_final", request_id=request_id, error=str(exc))
+                raise exc
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         content = response.choices[0].message.content if response.choices else None
 
-        if not content:
+        if not content or not content.strip():
+            log_warning(logger, "glm_empty_content", request_id=request_id)
             return GlmExtraction(tasks=[], metadata={"error": "empty_response"})
 
-        parsed = json.loads(content) if isinstance(content, str) else content
+        # MANDATE: Log the full raw response content
+        log_info(
+            logger,
+            "glm_raw_response",
+            request_id=request_id,
+            content=content
+        )
+
+        # Strip markdown code blocks if present
+        clean_content = content.strip()
+        if clean_content.startswith("```"):
+            # Remove opening block
+            clean_content = clean_content.lstrip("`")
+            if clean_content.startswith("json"):
+                clean_content = clean_content[4:].strip()
+            else:
+                clean_content = clean_content.strip()
+            
+            # Remove closing block
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3].strip()
+
+        try:
+            parsed = json.loads(clean_content) if isinstance(clean_content, str) else clean_content
+        except json.JSONDecodeError as jde:
+            log_warning(logger, "glm_json_decode_failed", request_id=request_id, error=str(jde), raw_content=content)
+            return GlmExtraction(tasks=[], metadata={"error": "json_decode_failed", "raw": content[:100]})
+            
         raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
         tasks: List[TaskCandidate] = []
         for item in raw_tasks:

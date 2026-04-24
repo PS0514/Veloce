@@ -119,7 +119,11 @@ async def send_startup_history(client: TelegramClient):
             continue
 
         # Using both count limit and date limit if provided
-        async for message in client.iter_messages(dialog.entity, limit=config.startup_history_limit, offset_date=limit_date):
+        async for message in client.iter_messages(dialog.entity, limit=config.startup_history_limit):
+            # STRICTOR: If we have a time limit, stop if the message is older than that limit
+            if limit_date and message.date and message.date < limit_date:
+                break
+
             scanned_count += 1
             if not message.message:
                 continue
@@ -139,8 +143,14 @@ async def send_startup_history(client: TelegramClient):
 
     if context_batch:
         await post_to_context_ingest_async(context_batch)
+    
     if webhook_batch:
-        await post_batch_to_webhook_async(webhook_batch)
+        log_info(logger, "telegram_startup_history_forwarding", count=len(webhook_batch))
+        for payload in webhook_batch:
+            # Process sequentially to avoid thundering herd on Orchestrator/AI/Calendar
+            await post_to_webhook_async(payload)
+            # Small sleep to give services breathing room
+            await asyncio.sleep(0.1)
     
     log_info(logger, "telegram_startup_history_done", scanned=scanned_count, forwarded=len(webhook_batch))
 

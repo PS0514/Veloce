@@ -43,6 +43,7 @@ def health():
 
 @app.post("/schedule", response_model=ScheduleResult)
 def schedule(payload: ScheduleRequest):
+    log_info(logger, "calendar_service_schedule_start", task=payload.task.task_name, request_id=payload.request_id)
     try:
         result = scheduling_engine.schedule(
             task=payload.task,
@@ -50,9 +51,11 @@ def schedule(payload: ScheduleRequest):
             request_id=payload.request_id,
             ephemeral_busy_slots=payload.ephemeral_busy_slots
         )
+        log_info(logger, "calendar_service_schedule_done", scheduled=result.scheduled, request_id=payload.request_id)
         return result
     except Exception as exc:
-        log_warning(logger, "calendar_service_schedule_failed", error=str(exc))
+        import traceback
+        log_warning(logger, "calendar_service_schedule_failed", error=str(exc), traceback=traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/create-event")
