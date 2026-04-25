@@ -4,6 +4,9 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
+# Set service name for logging before importing get_logger
+os.environ["VELOCE_SERVICE_NAME"] = "gmail"
+
 import aiohttp
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -24,34 +27,36 @@ class GmailConfig:
 config = GmailConfig()
 gmail_client = GmailClient()
 
-# State to keep track of last processed email ID
-LAST_MSG_FILE = "data/last_gmail_id.txt"
+# State to keep track of processed email IDs to avoid duplicates
+PROCESSED_MSGS_FILE = "data/processed_gmail_ids.txt"
 
-def get_last_msg_id() -> Optional[str]:
-    if os.path.exists(LAST_MSG_FILE):
-        with open(LAST_MSG_FILE, "r") as f:
-            return f.read().strip()
-    return None
+def get_processed_ids() -> set:
+    if os.path.exists(PROCESSED_MSGS_FILE):
+        with open(PROCESSED_MSGS_FILE, "r") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
 
-def save_last_msg_id(msg_id: str):
+def save_processed_id(msg_id: str):
     os.makedirs("data", exist_ok=True)
-    with open(LAST_MSG_FILE, "w") as f:
-        f.write(msg_id)
+    with open(PROCESSED_MSGS_FILE, "a") as f:
+        f.write(f"{msg_id}\n")
 
-async def post_to_orchestrator(payload: dict):
+async def post_to_orchestrator(payload: dict) -> bool:
     if not config.webhook_url:
-        return
+        return False
     
+    success = True
     # Forward to scheduler
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(config.webhook_url, json=payload, timeout=60) as resp:
                 resp.raise_for_status()
-                log_info(logger, "gmail_forwarded_to_orchestrator", msg_id=payload.get("message_id"))
+                log_info(logger, "gmail_forwarded_to_orchestrator", msg_id=payload.get("message_id"), subject=payload.get("chat_title"))
         except Exception as e:
             log_warning(logger, "gmail_forward_failed", error=str(e))
+            success = False
 
-    # Forward to ingest
+    # Forward to ingest (background context) - failing here shouldn't block the main success
     ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
     ingest_payload = {
         "source": "gmail",
@@ -68,10 +73,13 @@ async def post_to_orchestrator(payload: dict):
                 resp.raise_for_status()
         except Exception as e:
             log_warning(logger, "gmail_ingest_failed", error=str(e))
+            # We don't set success = False here because the primary goal (scheduling) might have worked
+            
+    return success
 
 async def gmail_poll_loop():
     log_info(logger, "gmail_poll_loop_start", interval=config.poll_interval)
-    last_id = get_last_msg_id()
+    processed_ids = get_processed_ids()
     
     while True:
         if not config.enabled:
@@ -79,19 +87,20 @@ async def gmail_poll_loop():
             continue
             
         try:
-            # Poll for unread or just latest messages
-            # For simplicity, let's poll for messages in INBOX
-            messages_summary = gmail_client.list_messages(query="label:INBOX", max_results=10)
+            # Calculate date for 3 days ago
+            three_days_ago = datetime.now(timezone.utc) - timedelta(days=3)
+            query = f"after:{three_days_ago.strftime('%Y/%m/%d')}"
             
-            new_messages = []
-            for msg_summ in messages_summary:
-                if msg_summ["id"] == last_id:
-                    break
-                new_messages.append(msg_summ["id"])
+            log_info(logger, "gmail_polling", query=query)
+            messages_summary = gmail_client.list_messages(query=query, max_results=50)
             
-            if new_messages:
-                # Process oldest first
-                for msg_id in reversed(new_messages):
+            new_count = 0
+            for msg_summ in reversed(messages_summary): # Process oldest first
+                msg_id = msg_summ["id"]
+                if msg_id in processed_ids:
+                    continue
+                
+                try:
                     full_msg = gmail_client.get_message(msg_id)
                     parsed = gmail_client.parse_message(full_msg)
                     
@@ -106,11 +115,14 @@ async def gmail_poll_loop():
                         "timezone": os.getenv("GENERIC_TIMEZONE", "UTC")
                     }
                     
-                    await post_to_orchestrator(payload)
-                    last_id = msg_id
-                    save_last_msg_id(last_id)
-                    
-            log_info(logger, "gmail_poll_tick", new_messages=len(new_messages))
+                    if await post_to_orchestrator(payload):
+                        processed_ids.add(msg_id)
+                        save_processed_id(msg_id)
+                        new_count += 1
+                except Exception as msg_err:
+                    log_warning(logger, "gmail_message_processing_failed", msg_id=msg_id, error=str(msg_err))
+            
+            log_info(logger, "gmail_poll_tick", new_messages=new_count)
             
         except Exception as e:
             log_warning(logger, "gmail_poll_failed", error=str(e))
@@ -124,34 +136,3 @@ async def startup_event():
 @app.get("/health")
 def health():
     return {"status": "ok", "gmail_enabled": config.enabled}
-
-@app.post("/sync-last-week")
-async def sync_last_week(background_tasks: BackgroundTasks):
-    background_tasks.add_task(perform_sync_last_week)
-    return {"status": "sync_started"}
-
-async def perform_sync_last_week():
-    log_info(logger, "gmail_sync_last_week_start")
-    try:
-        emails = gmail_client.fetch_emails_last_week()
-        for email in emails:
-            payload = {
-                "source": "gmail_history",
-                "message_id": email["id"],
-                "sender_id": email["sender"],
-                "chat_id": "gmail_inbox",
-                "chat_title": f"Gmail: {email['subject']}",
-                "message": f"Subject: {email['subject']}\nFrom: {email['sender']}\n\n{email['body']}",
-                "date": email["date"],
-                "timezone": os.getenv("GENERIC_TIMEZONE", "UTC")
-            }
-            # Only ingest to context, don't trigger scheduler for old emails unless explicitly wanted
-            # Actually, the user might want them to be added to calendar? 
-            # "extract useful info and add to calander"
-            # If I send to orchestrator, it will try to schedule.
-            # Let's send to orchestrator too.
-            await post_to_orchestrator(payload)
-            
-        log_info(logger, "gmail_sync_last_week_done", count=len(emails))
-    except Exception as e:
-        log_warning(logger, "gmail_sync_last_week_failed", error=str(e))

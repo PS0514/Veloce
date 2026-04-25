@@ -17,23 +17,15 @@ const els = {
   fieldTitle: document.getElementById("fieldTitle"),
   fieldDate: document.getElementById("fieldDate"),
   fieldTime: document.getElementById("fieldTime"),
-  fieldConfidence: document.getElementById("fieldConfidence"),
-  fieldMessage: document.getElementById("fieldMessage"),
-  taskList: document.getElementById("taskList"),
-  glmJson: document.getElementById("glmJson"),
-  clarificationWarning: document.getElementById("clarificationWarning"),
   lastPayload: document.getElementById("lastPayload"),
   manualModeToggle: document.getElementById("manualModeToggle"),
-  promptInput: document.getElementById("promptInput"),
   connectAccountBtn: document.getElementById("connectAccountBtn"),
-  resetSettingsBtn: document.getElementById("resetSettingsBtn"),
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   saveStatus: document.getElementById("saveStatus")
 };
 
 const DEFAULT_SETTINGS = {
-  manual_trigger_mode: true,
-  ai_prompt: ""
+  manual_trigger_mode: true
 };
 
 const DEFAULT_AUTH_STATUS = {
@@ -121,42 +113,14 @@ async function refreshAccountStatus() {
   applyGateState(response.status || DEFAULT_AUTH_STATUS);
 }
 
-function formatConfidence(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) {
-    return { text: "Unknown", className: "confidence-mid", showWarning: false };
-  }
-
-  if (num > 0.9) {
-    return { text: `${num.toFixed(2)} High`, className: "confidence-high", showWarning: false };
-  }
-
-  if (num < 0.6) {
-    return { text: `${num.toFixed(2)} Low`, className: "confidence-low", showWarning: true };
-  }
-
-  if (num < 0.8) {
-    return { text: `${num.toFixed(2)} Medium`, className: "confidence-mid", showWarning: false };
-  }
-
-  return { text: `${num.toFixed(2)} Medium+`, className: "confidence-mid", showWarning: false };
-}
-
 function renderAiResponse(aiResponse) {
   const title = aiResponse?.title || "-";
   const date = aiResponse?.date || "-";
   const time = aiResponse?.time || "-";
-  const message = aiResponse?.message || "-";
-  const confidence = formatConfidence(aiResponse?.confidence);
 
   els.fieldTitle.textContent = title;
   els.fieldDate.textContent = date;
   els.fieldTime.textContent = time;
-  els.fieldMessage.textContent = message;
-
-  els.fieldConfidence.className = `confidence-badge ${confidence.className}`;
-  els.fieldConfidence.textContent = confidence.text;
-  els.clarificationWarning.style.display = confidence.showWarning ? "block" : "none";
 }
 
 function renderPayload(payload) {
@@ -167,31 +131,6 @@ function renderPayload(payload) {
 
   const summary = `${payload.source} | ${new Date(payload.timestamp).toLocaleString()}`;
   els.lastPayload.textContent = `${summary} | ${truncate(payload.text)}`;
-}
-
-function renderTaskHistory(history) {
-  if (!Array.isArray(history) || history.length === 0) {
-    els.taskList.textContent = "No extracted tasks yet.";
-    return;
-  }
-
-  const lines = history.slice(0, 8).map((item) => {
-    const when = item?.timestamp ? new Date(item.timestamp).toLocaleString() : "Unknown time";
-    const source = item?.source || "unknown";
-    const text = truncate(item?.text || "", 180) || "(empty)";
-    return `- [${when}] ${source}: ${text}`;
-  });
-
-  els.taskList.textContent = lines.join("\n");
-}
-
-function renderGlmJson(aiResponse) {
-  if (!aiResponse || typeof aiResponse !== "object" || Object.keys(aiResponse).length === 0) {
-    els.glmJson.textContent = "No GLM response yet.";
-    return;
-  }
-
-  els.glmJson.textContent = JSON.stringify(aiResponse, null, 2);
 }
 
 function renderWorkflowState(workflowState) {
@@ -218,13 +157,11 @@ function renderWorkflowState(workflowState) {
 
 function renderSettings(state) {
   els.manualModeToggle.checked = state.manual_trigger_mode !== false;
-  els.promptInput.value = state.ai_prompt || "";
 }
 
 function saveSettings() {
   const next = {
-    manual_trigger_mode: els.manualModeToggle.checked,
-    ai_prompt: (els.promptInput.value || "").trim()
+    manual_trigger_mode: els.manualModeToggle.checked
   };
 
   chrome.storage.local.set(next, () => {
@@ -244,16 +181,12 @@ function refresh() {
     [
       "aiResponse",
       "lastPayload",
-      "taskHistory",
       "workflowState",
-      "manual_trigger_mode",
-      "ai_prompt"
+      "manual_trigger_mode"
     ],
     (state) => {
       renderAiResponse(state.aiResponse || {});
-      renderGlmJson(state.aiResponse || {});
       renderPayload(state.lastPayload);
-      renderTaskHistory(state.taskHistory || []);
       renderWorkflowState(state.workflowState || {});
       renderSettings(state);
     }
@@ -277,7 +210,6 @@ els.settingsTabBtn.addEventListener("click", () => setTab("settings"));
 els.refreshStatusBtn.addEventListener("click", refreshAccountStatus);
 els.gateConnectAccountBtn.addEventListener("click", connectAccount);
 els.connectAccountBtn.addEventListener("click", connectAccount);
-els.resetSettingsBtn.addEventListener("click", resetAllSettings);
 els.saveSettingsBtn.addEventListener("click", saveSettings);
 
 window.addEventListener("focus", refreshAccountStatus);

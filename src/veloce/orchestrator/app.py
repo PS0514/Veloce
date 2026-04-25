@@ -117,8 +117,21 @@ def _request_id(*, source: str | None, chat_id: str | int | None, message_id: st
     return f"{source_part}:{chat_part}:{message_part}"
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
 def _create_app() -> FastAPI:
     app = FastAPI(title="Veloce Orchestrator", version="0.1.0", lifespan=lifespan)
+    
+    # Add CORS middleware for the Chrome extension
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for local dev
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
     app.include_router(router)
     return app
 

@@ -29,8 +29,8 @@ class NormalizedInbound(BaseModel):
     timezone: str
     raw_text: str
     reply_to_me: bool = False
-    reply_to_msg_id: str | int | None
-    reply_to_text: str | None
+    reply_to_msg_id: str | int | None = None
+    reply_to_text: str | None = None
 
 
 class TaskCandidate(BaseModel):

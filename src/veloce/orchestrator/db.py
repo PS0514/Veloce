@@ -310,9 +310,15 @@ class SQLiteStore:
                 where.append("tc.date >= ?")
                 base_params.append(since)
 
-            safe_query = f'"{query}"' if query else ""
+            # Clean query for FTS5 to avoid syntax errors and "no such column" errors
+            # We remove colons, double quotes, and other special FTS characters.
+            clean_query = query.replace('"', ' ').replace(':', ' ').replace('*', ' ').replace('(', ' ').replace(')', ' ')
+            # Truncate to avoid extremely long queries that might cause issues
+            clean_query = " ".join(clean_query.split()[:20]) 
+            
+            safe_query = f'"{clean_query}"' if clean_query else ""
 
-            if query:
+            if clean_query:
                 sql = f"""
                     SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
                     FROM telegram_context_fts f

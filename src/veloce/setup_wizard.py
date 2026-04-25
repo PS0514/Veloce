@@ -21,6 +21,13 @@ logger = get_logger(__name__)
 APP = Flask(__name__)
 APP.secret_key = os.getenv("FLASK_SECRET_KEY", "veloce-local-setup-secret")
 
+@APP.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response
+
 ROOT = Path(__file__).resolve().parents[2]
 GOOGLE_CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -877,30 +884,9 @@ def action_google_logout():
     ) + render_template("partials/notifications_oob.html", info="Logged out of Google.")
 
 
-@APP.route("/action/sync-gmail-history", methods=["POST"])
-def action_sync_gmail_history():
-    try:
-        # Trigger the sync via the gmail service
-        # The gmail service might not be running yet if it's managed by docker, 
-        # but in local dev we can try to call it.
-        # However, it's safer to just inform the user we are starting it.
-        # Or better, we can call the endpoint of the gmail service if we know its URL.
-        gmail_service_url = os.getenv("GMAIL_SERVICE_URL", "http://localhost:8005")
-        resp = requests.post(f"{gmail_service_url}/sync-last-week", timeout=5)
-        resp.raise_for_status()
-        success = "Gmail history sync started in the background."
-        error = ""
-    except Exception as exc:
-        success = ""
-        error = f"Failed to start Gmail sync: {exc}. Make sure the Gmail service is running."
-    
-    return render_template("partials/notifications_oob.html", success=success, error=error)
-
-
 # ---------------------------------------------------------------------------
 # Main route
 # ---------------------------------------------------------------------------
-
 @APP.route("/", methods=["GET"])
 def index():
     values = current_values()
