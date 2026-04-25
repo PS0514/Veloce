@@ -118,10 +118,32 @@ async def trigger_daily_brief():
         log_warning(logger, "daily_brief_trigger_failed", error=str(exc))
 
 
+async def schedule_daily_brief():
+    """Background task to run the daily brief at 8:00 AM every day."""
+    while True:
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+        now = datetime.now(tz)
+        
+        # Schedule for 8:00 AM
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        
+        # If it's already past 8:00 AM today, schedule for tomorrow
+        if now >= target:
+            target += timedelta(days=1)
+        
+        sleep_seconds = (target - now).total_seconds()
+        log_info(logger, "daily_brief_scheduled", next_run=target.isoformat(), sleep_seconds=int(sleep_seconds))
+        
+        await asyncio.sleep(sleep_seconds)
+        await trigger_daily_brief()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Trigger daily brief on startup (informs the request)
+    # Trigger daily brief on startup
     asyncio.create_task(trigger_daily_brief())
+    # Start the recurring schedule
+    asyncio.create_task(schedule_daily_brief())
     yield
 
 

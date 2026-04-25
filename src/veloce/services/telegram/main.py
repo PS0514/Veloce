@@ -78,7 +78,7 @@ async def process_batch(chat_id: int):
             
             if use_dm and config.notification_chat_id:
                 notif_text = (
-                    f"❓ **Clarification Needed**\n"
+                    f"❓ **[VeloceBot] Clarification Needed**\n"
                     f"Task: {task_name}\n"
                     f"Question: {question}\n"
                     f"Source: {res_chat_title}\n"
@@ -100,7 +100,9 @@ async def process_batch(chat_id: int):
                 try:
                     if client:
                         reply_text = (
-                            f"[VeloceBot] {question}\n"
+                            f"❓ **[VeloceBot] Clarification Needed**\n"
+                            f"Task: {task_name}\n"
+                            f"Question: {question}\n"
                             f"`[Ref:{src_chat_id}:{src_msg_id}]`"
                         )
                         msg = await client.send_message(chat_id, reply_text)
@@ -123,7 +125,7 @@ async def process_batch(chat_id: int):
             src_msg_id = result.get("source_message_id")
             
             if client:
-                msg = await client.send_message(chat_id, f"✅ Scheduled: **{task_name}**")
+                msg = await client.send_message(chat_id, f"✅ **[VeloceBot] Scheduled**: **{task_name}**")
                 automated_payloads.append({
                     "chat_id": chat_id,
                     "message_id": msg.id,
@@ -192,6 +194,10 @@ async def send_bot_notification(token: str, chat_id: str, text: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 async def send_notification_internal(text: str, use_bot: bool = True) -> dict:
+    # Add prefix for clear identification
+    if not text.strip().startswith("[VeloceBot]"):
+        text = f"**[VeloceBot]**\n{text}"
+    
     log_info(logger, "notification_internal_start", use_bot=use_bot, chat_id=config.notification_chat_id, text_preview=text[:100])
     
     # 1. Try Bot first if requested
