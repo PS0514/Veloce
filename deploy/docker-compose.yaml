@@ -82,7 +82,7 @@ services:
     depends_on:
       - orchestrator
     environment:
-      N8N_WEBHOOK_URL: http://orchestrator:8000/veloce-task-scheduler
+      VELOCE_ORCHESTRATOR_URL: http://orchestrator:8000/veloce-task-scheduler
       TZ: Asia/Kuala_Lumpur
     volumes:
       - ..:/app

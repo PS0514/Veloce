@@ -85,6 +85,9 @@ class SchedulerPipeline:
                 reason="No actionable task extracted",
                 selected_task=None,
                 state="decision_no_action",
+                chat_title=inbound.chat_title,
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
             )
         return results[0]
 
@@ -172,6 +175,9 @@ class SchedulerPipeline:
                 reason="No actionable task extracted",
                 selected_task=None,
                 state="decision_no_action",
+                chat_title=inbound.chat_title,
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
             )]
 
         results: list[SchedulerResponse] = []
@@ -261,6 +267,41 @@ class SchedulerPipeline:
                 request_id=request_id
             )
             log_info(logger, "pipeline_strategizing_done", request_id=request_id, task_count=len(strategized_tasks))
+
+            # NEW: Multi-event plan approval flow
+            if len(strategized_tasks) > 1:
+                # Check if this is already an approval of a previously proposed plan
+                is_approval = False
+                if inbound.reply_to_me:
+                    positive_keywords = ["yes", "proceed", "ok", "sure", "go ahead", "do it", "agree", "yep", "y"]
+                    if any(kw in inbound.raw_text.lower().split() for kw in positive_keywords):
+                        is_approval = True
+                
+                if not is_approval:
+                    plan_lines = []
+                    for st in strategized_tasks:
+                        time_part = st.start_time_iso or st.deadline_iso
+                        # Optional: format time_part for better readability
+                        plan_lines.append(f"- {st.task_name} at {time_part}")
+                    
+                    plan_summary = "\n".join(plan_lines)
+                    question = (
+                        f"I've created a study plan for you:\n\n{plan_summary}\n\n"
+                        f"Would you like me to proceed with scheduling these {len(strategized_tasks)} events?"
+                    )
+                    
+                    results.append(SchedulerResponse(
+                        scheduled=False,
+                        selected_task=task,
+                        needs_clarification=True,
+                        clarification_question=question,
+                        reason="Multi-event plan needs approval",
+                        state="needs_clarification",
+                        chat_title=inbound.chat_title,
+                        source_chat_id=inbound.chat_id,
+                        source_message_id=inbound.message_id,
+                    ))
+                    continue
 
             for subtask in strategized_tasks:
                 schedule_result = self.scheduling_engine.schedule(

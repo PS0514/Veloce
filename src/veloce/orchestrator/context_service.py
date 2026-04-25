@@ -68,6 +68,12 @@ class ContextService:
             
             bot_type = row["bot_type"] if "bot_type" in row.keys() else None
             is_automated = bool(bot_type)
+            
+            # Fallback: If not found in DB but text has bot signature, treat as automated
+            if not is_automated and "[VeloceBot]" in (row["message"] or ""):
+                is_automated = True
+                bot_type = "userbot"
+
             prefix = f"[{bot_type.upper()}]" if is_automated else "[USER]"
             prefixed_message = f"{prefix}: {row['message']}"
 
@@ -123,6 +129,12 @@ class ContextService:
             
         bot_type = trigger_row["bot_type"] if "bot_type" in trigger_row.keys() else None
         is_automated = bool(bot_type)
+        
+        # Fallback: If not found in DB but text has bot signature, treat as automated
+        if not is_automated and "[VeloceBot]" in (trigger_row["message"] or ""):
+            is_automated = True
+            bot_type = "userbot"
+
         prefix = f"[{bot_type.upper()}]" if is_automated else "[USER]"
         prefixed_message = f"{prefix}: {trigger_row['message']}"
 

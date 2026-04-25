@@ -122,16 +122,40 @@ async def process_batch(chat_id: int):
                         log_info(logger, "clarification_sent_group", chat_id=chat_id)
                 except Exception as exc:
                     log_warning(logger, "clarification_send_failed", error=str(exc))
-                    if not sent_dm and config.notification_chat_id:
-                        await send_notification_internal(f"❓ **Clarification Needed** (Send Failed)\nQuestion: {question}")
+                    # Fallback to plain text if markdown fails
+                    try:
+                        if client:
+                            fallback_text = f"[VeloceBot] Clarification Needed\nTask: {task_name}\nQuestion: {question}\n[Ref:{src_chat_id}:{src_msg_id}]"
+                            msg = await client.send_message(chat_id, fallback_text, parse_mode=None)
+                            automated_payloads.append({
+                                "chat_id": chat_id,
+                                "message_id": msg.id,
+                                "bot_type": "userbot",
+                                "trigger_msg_id": src_msg_id,
+                                "task_name": task_name
+                            })
+                    except Exception:
+                        if not sent_dm and config.notification_chat_id:
+                            await send_notification_internal(f"❓ **Clarification Needed** (Send Failed)\nQuestion: {question}")
 
-            elif result.get("scheduled"):
-                task_name = result.get("selected_task", {}).get("task_name", "Task")
-                res_chat_title = result.get("chat_title", "Unknown Chat")
-                src_msg_id = result.get("source_message_id")
-                
-                if client:
-                    msg = await client.send_message(chat_id, f"✅ **[VeloceBot] Scheduled**: **{task_name}**")
+        elif result.get("scheduled"):
+            task_obj = result.get("selected_task") or {}
+            task_name = task_obj.get("task_name", "Task")
+            study_guide = task_obj.get("study_guide")
+            reason = result.get("reason")
+            res_chat_title = result.get("chat_title", "Unknown Chat")
+            src_msg_id = result.get("source_message_id")
+            
+            # Build success text with description if available
+            success_msg_body = f"✅ **[VeloceBot] Scheduled**: **{task_name}**"
+            if reason and "Successfully scheduled" not in reason:
+                success_msg_body += f"\n\n{reason}"
+            if study_guide:
+                success_msg_body += f"\n\n**Strategy**:\n{study_guide}"
+
+            if client:
+                try:
+                    msg = await client.send_message(chat_id, success_msg_body)
                     automated_payloads.append({
                         "chat_id": chat_id,
                         "message_id": msg.id,
@@ -139,9 +163,30 @@ async def process_batch(chat_id: int):
                         "trigger_msg_id": src_msg_id,
                         "task_name": task_name
                     })
-                
-                if config.notification_chat_id:
+                except Exception as exc:
+                    log_warning(logger, "scheduled_group_notif_failed", error=str(exc))
+                    # Fallback to plain text if markdown fails
+                    try:
+                        fallback_body = f"[VeloceBot] Scheduled: {task_name}"
+                        if study_guide:
+                            fallback_body += f"\n\nStrategy:\n{study_guide}"
+                        msg = await client.send_message(chat_id, fallback_body, parse_mode=None)
+                        automated_payloads.append({
+                            "chat_id": chat_id,
+                            "message_id": msg.id,
+                            "bot_type": "userbot",
+                            "trigger_msg_id": src_msg_id,
+                            "task_name": task_name
+                        })
+                    except Exception:
+                        pass
+            
+            # Only send secondary notification if source chat is NOT the notification chat
+            if config.notification_chat_id and str(chat_id) != str(config.notification_chat_id):
+                try:
                     notif_text = f"🚀 Task Scheduled\nTask: {task_name}\nSource: {res_chat_title}"
+                    if study_guide:
+                        notif_text += f"\n\nStrategy:\n{study_guide}"
                     res = await send_notification_internal(notif_text)
                     if res.get("status") == "sent":
                         automated_payloads.append({
@@ -151,10 +196,37 @@ async def process_batch(chat_id: int):
                             "trigger_msg_id": src_msg_id,
                             "task_name": task_name
                         })
+                except Exception as exc:
+                    log_warning(logger, "scheduled_dm_notif_failed", error=str(exc))
 
-            elif state in ("general_chat_replied", "calendar_query_answered", "memory_saved"):
-                reason = result.get("reason", "")
-                src_msg_id = result.get("source_message_id")
+        elif state in ("general_chat_replied", "calendar_query_answered", "memory_saved"):
+            reason = result.get("reason", "")
+            src_msg_id = result.get("source_message_id")
+            res_chat_title = result.get("chat_title", "Unknown Chat")
+            src_chat_id = result.get("source_chat_id", "")
+
+            # Respect clarification_mode
+            use_dm = config.clarification_mode == "dm"
+            sent_dm = False
+
+            if use_dm and config.notification_chat_id:
+                try:
+                    notif_text = f"💬 **[VeloceBot] Response**\nSource: {res_chat_title}\n\n{reason}\n`[Ref:{src_chat_id}:{src_msg_id}]`"
+                    res = await send_notification_internal(notif_text)
+                    if res.get("status") == "sent":
+                        automated_payloads.append({
+                            "chat_id": res["chat_id"],
+                            "message_id": res["message_id"],
+                            "bot_type": res["bot_type"],
+                            "trigger_msg_id": src_msg_id,
+                            "task_name": "General Chat"
+                        })
+                        sent_dm = True
+                        log_info(logger, "reply_sent_dm", chat_id=config.notification_chat_id, state=state)
+                except Exception as exc:
+                    log_warning(logger, "reply_dm_failed", error=str(exc))
+
+            if not use_dm or not sent_dm:
                 if client:
                     try:
                         msg = await client.send_message(chat_id, reason, reply_to=src_msg_id)
@@ -168,9 +240,11 @@ async def process_batch(chat_id: int):
                         log_info(logger, "telegram_service_sent_reply", chat_id=chat_id, state=state)
                     except Exception as exc:
                         log_warning(logger, "telegram_service_reply_failed", error=str(exc))
-            
-            if automated_payloads:
-                await post_to_automated_ingest_async(automated_payloads)
+                        if not sent_dm and config.notification_chat_id:
+                            await send_notification_internal(f"💬 **[VeloceBot] Response** (Send Failed)\n\n{reason}")
+        
+        if automated_payloads:
+            await post_to_automated_ingest_async(automated_payloads)
 
 async def post_to_automated_ingest_async(payload: dict | list[dict], max_retries: int = 3) -> bool:
     if not config.webhook_url:
@@ -217,8 +291,11 @@ async def send_bot_notification(token: str, chat_id: str, text: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 async def send_notification_internal(text: str, use_bot: bool = True) -> dict:
-    # Add prefix for clear identification
-    if not text.strip().startswith("[VeloceBot]"):
+    # Add prefix for clear identification if not already present
+    clean_text = text.strip()
+    has_prefix = "[VeloceBot]" in clean_text[:30]
+    
+    if not has_prefix:
         text = f"**[VeloceBot]**\n{text}"
     
     log_info(logger, "notification_internal_start", use_bot=use_bot, chat_id=config.notification_chat_id, text_preview=text[:100])
@@ -344,7 +421,6 @@ async def wait_for_orchestrator():
             await asyncio.sleep(3)
 
 async def is_allowed_chat(chat_id: int, username: Optional[str] = None) -> bool:
-    # ... (rest of function remains same)
     # 1. Always allow the notification chat (for responding to clarifications)
     if config.notification_chat_id:
         try:
@@ -457,11 +533,16 @@ async def send_startup_history(client: TelegramClient):
             for result in results:
                 automated_payloads = []
                 if result.get("scheduled"):
-                    task_name = result.get("selected_task", {}).get("task_name", "Task")
+                    task_obj = result.get("selected_task") or {}
+                    task_name = task_obj.get("task_name", "Task")
+                    study_guide = task_obj.get("study_guide")
                     res_chat_title = result.get("chat_title") or chat_title
                     src_msg_id = result.get("source_message_id")
-                    if config.notification_chat_id:
+                    
+                    if config.notification_chat_id and str(dialog.id) != str(config.notification_chat_id):
                         notif_text = f"🚀 Task Scheduled (Missed)\nTask: {task_name}\nSource: {res_chat_title}"
+                        if study_guide:
+                            notif_text += f"\n\nStrategy:\n{study_guide}"
                         res = await send_notification_internal(notif_text)
                         if res.get("status") == "sent":
                             automated_payloads.append({

@@ -335,9 +335,12 @@ def veloce_task_scheduler(
                     log_info(logger, "scheduler_skipping_automated_message_strict", chat_id=item.chat_id, message_id=item.message_id)
                     continue
 
-            # Fallback for bot messages not in the automated_messages table
-            if getattr(item, "is_bot", False):
-                log_info(logger, "scheduler_skipping_automated_message_fallback_strict", chat_id=item.chat_id, message_id=item.message_id)
+            # Fallback for bot messages: Check for [VeloceBot] signature or is_bot flag
+            is_bot_text = "[VeloceBot]" in (item.message or "")
+            if is_bot_text or getattr(item, "is_bot", False):
+                log_info(logger, "scheduler_skipping_automated_message_fallback_strict", 
+                         chat_id=item.chat_id, message_id=item.message_id, 
+                         reason="signature" if is_bot_text else "flag")
                 continue
             
             filtered_group.append(item)

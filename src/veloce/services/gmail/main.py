@@ -21,14 +21,33 @@ app = FastAPI(title="Veloce Gmail Service", version="0.1.0")
 
 class GmailConfig:
     def __init__(self):
+        # Load unified configuration
+        l_config = load_listener_config()
         self.poll_interval = int(os.getenv("GMAIL_POLL_INTERVAL", "60"))
-        self.webhook_url = os.getenv("N8N_WEBHOOK_URL") # Reusing N8N_WEBHOOK_URL as it points to Orchestrator
+        
+        # Priority: VELOCE_ORCHESTRATOR_URL (via load_listener_config) -> N8N_WEBHOOK_URL
+        self.webhook_url = l_config.webhook_url
+        self.history_days = l_config.startup_history_days or 3
+        
+        # Robustly derive endpoints
+        if self.webhook_url:
+            # Strip the specific endpoint if present to get the base
+            base_url = self.webhook_url.replace("/veloce-task-scheduler", "")
+            if not base_url.endswith("/"):
+                base_url += "/"
+            
+            self.ingest_url = f"{base_url}telegram-context-ingest"
+            self.ids_url = f"{base_url}gmail-context-ids"
+        else:
+            self.ingest_url = None
+            self.ids_url = None
 
 config = GmailConfig()
 gmail_client = GmailClient()
 
 async def post_to_orchestrator(payload: dict) -> bool:
     if not config.webhook_url:
+        log_warning(logger, "gmail_webhook_url_missing")
         return False
     
     success = True
@@ -43,41 +62,65 @@ async def post_to_orchestrator(payload: dict) -> bool:
             success = False
 
     # Forward to ingest (background context) - failing here shouldn't block the main success
-    ingest_url = config.webhook_url.replace("/veloce-task-scheduler", "/telegram-context-ingest")
-    ingest_payload = {
-        "source": "gmail",
-        "message_id": payload["message_id"],
-        "sender_id": payload["sender_id"],
-        "chat_id": payload["chat_id"],
-        "chat_title": payload["chat_title"],
-        "message": payload["message"],
-        "date": payload["date"]
-    }
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(ingest_url, json=ingest_payload, timeout=60) as resp:
-                resp.raise_for_status()
-        except Exception as e:
-            log_warning(logger, "gmail_ingest_failed", error=str(e))
+    if config.ingest_url:
+        ingest_payload = {
+            "source": "gmail",
+            "message_id": payload["message_id"],
+            "sender_id": payload["sender_id"],
+            "chat_id": payload["chat_id"],
+            "chat_title": payload["chat_title"],
+            "message": payload["message"],
+            "date": payload["date"]
+        }
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(config.ingest_url, json=ingest_payload, timeout=60) as resp:
+                    resp.raise_for_status()
+            except Exception as e:
+                log_warning(logger, "gmail_ingest_failed", error=str(e))
             
     return success
 
+async def wait_for_orchestrator():
+    """Wait for the orchestrator to be healthy before proceeding."""
+    if not config.webhook_url:
+        return
+    
+    from urllib.parse import urlparse
+    parsed = urlparse(config.webhook_url)
+    health_url = f"{parsed.scheme}://{parsed.netloc}/health"
+    
+    log_info(logger, "gmail_waiting_for_orchestrator", url=health_url)
+    
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(health_url, timeout=5) as resp:
+                    if resp.status == 200:
+                        log_info(logger, "gmail_orchestrator_ready")
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(3)
+
 async def gmail_poll_loop():
+    await wait_for_orchestrator()
     log_info(logger, "gmail_poll_loop_start", interval=config.poll_interval)
     
     # Initialize processed IDs by fetching from orchestrator
     processed_ids = set()
-    if config.webhook_url:
+    if config.ids_url:
         try:
-            ids_url = config.webhook_url.replace("/veloce-task-scheduler", "/gmail-context-ids")
             async with aiohttp.ClientSession() as session:
-                async with session.get(ids_url, timeout=20) as resp:
+                async with session.get(config.ids_url, timeout=20) as resp:
                     if resp.status == 200:
                         id_list = await resp.json()
                         processed_ids = set(id_list)
                         log_info(logger, "gmail_sync_state_loaded", count=len(processed_ids))
         except Exception as e:
             log_warning(logger, "gmail_sync_state_load_failed", error=str(e))
+    else:
+        log_warning(logger, "gmail_ids_url_missing_dedup_skipped")
     
     while True:
         # Check enabled status dynamically from runtime config
@@ -87,9 +130,9 @@ async def gmail_poll_loop():
             continue
             
         try:
-            # Calculate date for 3 days ago
-            three_days_ago = datetime.now(timezone.utc) - timedelta(days=3)
-            query = f"after:{three_days_ago.strftime('%Y/%m/%d')}"
+            # Calculate date for history scan
+            start_date = datetime.now(timezone.utc) - timedelta(days=config.history_days)
+            query = f"after:{start_date.strftime('%Y/%m/%d')}"
             
             log_info(logger, "gmail_polling", query=query)
             messages_summary = gmail_client.list_messages(query=query, max_results=50)
@@ -143,3 +186,7 @@ async def startup_event():
 def health():
     enabled = str(get_config_value("enable_gmail_sync", "true")).lower() == "true"
     return {"status": "ok", "gmail_enabled": enabled}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8005)

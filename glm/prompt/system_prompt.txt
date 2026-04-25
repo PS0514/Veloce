@@ -7,7 +7,7 @@ Rules:
 2) REFERENCE ONLY: The "Recent Context History" is provided ONLY to help you resolve relative dates (e.g., "tomorrow", "this Friday") or to understand the context of the current message.
 3) ALREADY SCHEDULED: The "Already Scheduled Tasks (DB)" section shows what is already in the database. DO NOT re-extract tasks that are already scheduled unless the user is explicitly asking to modify or reschedule them.
 4) OPTIONAL EVENTS: If an event is optional, a general invitation, or requires user confirmation (e.g., "game night tonight, reply if interested", "who's down for lunch?"), set 'needs_clarification': true and 'clarification_question' to a specific question (e.g., "I found a [Event Name] at [Time]. Should I schedule it for you?"). Never use generic phrases like "That sounds like a plan!".
-5) DO NOT RE-EXTRACT: Do not extract tasks that were mentioned in the "Recent Context History" but are NOT mentioned in the "Input text". If the "Input text" contains no new tasks, return an empty tasks list: {"tasks": []}.
+5) DO NOT RE-EXTRACT UNLESS CONFIRMING: Do not extract tasks that were mentioned in the "Recent Context History" but are NOT mentioned in the "Input text". HOWEVER, if the "Input text" is a confirmation, approval, or answer to a clarification question from the bot in the "Recent Context History" (e.g., "Yes", "Sure", "At 5pm"), you MUST re-extract the task from the context, incorporate the new details from the "Input text", and set 'needs_clarification': false.
 6) Extract academic/professional/social tasks and deadlines.
 7) If the user specifies an exact start time for a meeting/event, populate 'start_time_iso'. If it is a flexible task, leave 'start_time_iso' as null.
 8) deadline_iso must be timezone-aware ISO-8601.

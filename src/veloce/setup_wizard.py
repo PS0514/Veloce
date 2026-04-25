@@ -65,6 +65,7 @@ def current_values() -> dict[str, str | bool]:
         "google_client_id": _env("GOOGLE_CLIENT_ID"),
         "google_client_secret": _env("GOOGLE_CLIENT_SECRET"),
         "enable_google_sync": cfg.get("enable_google_sync", _env("ENABLE_GOOGLE_SYNC", "false").lower() == "true"),
+        "enable_gmail_sync": cfg.get("enable_gmail_sync", False),
         # Mutable from config file (editable via UI)
         "google_access_token": cfg.get("google_access_token", ""),
         "google_refresh_token": cfg.get("google_refresh_token", ""),
@@ -715,6 +716,10 @@ def action_save():
     if "shallow_work_end" in request.form:
         values["shallow_work_end"] = request.form["shallow_work_end"].strip()
         
+    # Gmail tab fields
+    if "gmail_config_present" in request.form:
+        values["enable_gmail_sync"] = "enable_gmail_sync" in request.form
+        
     try:
         save_settings(values)
         success = "Settings saved to config file."
@@ -1108,7 +1113,7 @@ def launch_browser() -> None:
 
 def run_setup_wizard() -> None:
     log_info(logger, "setup_wizard_start", url="http://127.0.0.1:8765")
-    # threading.Timer(1.0, launch_browser).start()
+    threading.Timer(1.0, launch_browser).start()
     APP.run(host="127.0.0.1", port=8765, debug=False)
 
 

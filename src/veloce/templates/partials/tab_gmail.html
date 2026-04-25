@@ -9,12 +9,22 @@
       </div>
     
       <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+        <input type="hidden" name="gmail_config_present" value="true">
         <label style="display: flex; align-items: center; cursor: pointer; font-weight: 400; gap: 8px; width: auto;">
           <input type="checkbox" name="enable_gmail_sync" value="true" {% if values.get('enable_gmail_sync') %}checked{%
             endif %} style="width: 18px; height: 18px;">
           Enable automatic inbox scanning
         </label>
       </div>
+
+      <div style="margin-top: 20px;">
+        <label>History Scan Days</label>
+        <input type="number" name="startup_history_days" value="{{ values.get('startup_history_days', 3) }}" min="1" max="30" style="width: 100px;">
+        <p class="muted" style="margin-top: 4px; font-size: 0.85rem;">
+          How many days back should Veloce look for tasks in your inbox?
+        </p>
+      </div>
+
       <p class="muted" style="margin-top: 6px;">Veloce will check for new emails every minute and schedule tasks
         automatically.</p>
     </div>
