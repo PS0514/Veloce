@@ -190,7 +190,7 @@ class SchedulerPipeline:
                     time_max=end_of_week
                 )
                 workload_context = [
-                    {"summary": e.summary, "start": e.start, "end": e.end}
+                    {"summary": e.summary, "start": e.start.isoformat(), "end": e.end.isoformat()}
                     for e in raw_events
                 ]
             except Exception as e:

@@ -194,17 +194,30 @@ async def send_bot_notification(token: str, chat_id: str, text: str) -> dict:
 async def send_notification_internal(text: str, use_bot: bool = True) -> dict:
     log_info(logger, "notification_internal_start", use_bot=use_bot, chat_id=config.notification_chat_id, text_preview=text[:100])
     
+    # 1. Try Bot first if requested
     if use_bot and config.bot_token and config.notification_chat_id:
-        return await send_bot_notification(config.bot_token, config.notification_chat_id, text)
+        result = await send_bot_notification(config.bot_token, config.notification_chat_id, text)
+        if result.get("status") == "sent":
+            return result
+        log_warning(logger, "bot_notification_failed_falling_back", error=result.get("error"))
     
+    # 2. Fallback to Userbot (Client)
     if client and config.notification_chat_id:
         try:
-            msg = await client.send_message(int(config.notification_chat_id), text)
+            # Handle potential string chat_ids from config
+            target_chat_id = config.notification_chat_id
+            if isinstance(target_chat_id, str):
+                if target_chat_id.startswith("-100") or target_chat_id.startswith("-"):
+                    target_chat_id = int(target_chat_id)
+                elif target_chat_id.isdigit():
+                    target_chat_id = int(target_chat_id)
+            
+            msg = await client.send_message(target_chat_id, text)
             log_info(logger, "userbot_notification_sent", chat_id=config.notification_chat_id, message_id=msg.id)
             return {
                 "status": "sent",
                 "bot_type": "userbot",
-                "chat_id": int(config.notification_chat_id),
+                "chat_id": target_chat_id,
                 "message_id": msg.id
             }
         except Exception as exc:

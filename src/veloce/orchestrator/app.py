@@ -39,11 +39,26 @@ async def daily_brief_logic() -> dict[str, str]:
     tz = ZoneInfo(DEFAULT_TIMEZONE)
     now_local = datetime.now(tz)
     
-    # Start of the current local day (00:00:00)
     start_of_day_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    # End of the current local day (23:59:59)
     end_of_day_local = start_of_day_local + timedelta(days=1)
     
+    # 2. Get yesterday's UNCONFIRMED tasks for the Feedback Loop
+    yesterday_start = start_of_day_local - timedelta(days=1)
+    unconfirmed_tasks = []
+    if services.store:
+        # Fetch tasks from yesterday that aren't completed yet
+        with services.store._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT task_name, calendar_event_id 
+                FROM scheduled_tasks 
+                WHERE start_time >= ? AND start_time < ? AND is_completed = 0
+                LIMIT 5
+                """,
+                (yesterday_start.isoformat(), start_of_day_local.isoformat())
+            ).fetchall()
+            unconfirmed_tasks = [dict(r) for r in rows]
+
     try:
         events = services.calendar_client.list_events(
             time_min=start_of_day_local, 
@@ -53,7 +68,7 @@ async def daily_brief_logic() -> dict[str, str]:
         log_warning(logger, "daily_brief_calendar_failed", error=str(exc))
         events = []
 
-    # 2. Generate tailored brief using GLM
+    # 3. Generate tailored brief using GLM
     event_dicts = []
     for e in events:
         event_dicts.append({
@@ -61,13 +76,12 @@ async def daily_brief_logic() -> dict[str, str]:
             "summary": e.summary,
             "start": e.start.isoformat(),
             "end": e.end.isoformat(),
-            "description": e.description,
-            "location": e.location
         })
 
     try:
         message = services.glm_client.generate_brief(
             events=event_dicts,
+            unconfirmed_tasks=unconfirmed_tasks,
             now_iso=now_local.isoformat(),
             timezone=DEFAULT_TIMEZONE
         )
@@ -329,6 +343,27 @@ def veloce_task_scheduler(
             chat_id=chat_id,
             batch_size=len(group),
         )
+
+        # 3. Check for Feedback Pattern (e.g., "History Essay took 60m")
+        feedback_match = re.search(r"(.+?)\s+took\s+(\d+)\s*(m|min|minutes|h|hours)", combined_text, re.IGNORECASE)
+        if feedback_match:
+            task_name_query = feedback_match.group(1).strip()
+            duration_val = int(feedback_match.group(2))
+            unit = feedback_match.group(3).lower()
+            
+            if unit.startswith("h"):
+                duration_val *= 60
+            
+            # Find the most recent task with this name in the DB
+            with services.store._connect() as conn:
+                row = conn.execute(
+                    "SELECT calendar_event_id FROM scheduled_tasks WHERE task_name LIKE ? ORDER BY inserted_at DESC LIMIT 1",
+                    (f"%{task_name_query}%",)
+                ).fetchone()
+                
+                if row:
+                    services.store.update_task_feedback(row["calendar_event_id"], duration_val)
+                    log_info(logger, "scheduler_feedback_captured", task=task_name_query, duration=duration_val)
 
         # Retrieve context once for the whole batch
         context_items = []

@@ -65,10 +65,11 @@ class GlmClient:
             log_warning(logger, "glm_client_strategize_failed", error=str(exc))
             return [task]
 
-    def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
+    def generate_brief(self, events: List[dict], unconfirmed_tasks: Optional[List[dict]] = None, now_iso: str = "", timezone: str = "") -> str:
         url = f"{self.service_url}/generate-brief"
         payload = {
             "events": events,
+            "unconfirmed_tasks": unconfirmed_tasks,
             "now_iso": now_iso,
             "timezone": timezone
         }

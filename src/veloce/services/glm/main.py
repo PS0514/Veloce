@@ -72,6 +72,7 @@ class StrategizeRequest(BaseModel):
 
 class BriefRequest(BaseModel):
     events: List[dict]
+    unconfirmed_tasks: Optional[List[dict]] = None
     now_iso: str
     timezone: str
 
@@ -315,13 +316,20 @@ class GlmService:
     def _fallback_extraction(self, inbound: NormalizedInbound, request_id: Optional[str] = None) -> GlmExtraction:
         return GlmExtraction(tasks=[], metadata={"fallback": True})
 
-    def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
+    def generate_brief(self, events: List[dict], unconfirmed_tasks: Optional[List[dict]] = None, now_iso: str = "", timezone: str = "") -> str:
         if not self.api_key or self._client is None:
             return "Good morning! Hope you have a great day."
         
         events_str = "\n".join([f"- {e.get('summary')} at {e.get('start')}" for e in events])
-        system_prompt = "You are Veloce, a productivity assistant. Provide a warm daily brief."
-        user_prompt = f"Today's Schedule:\n{events_str}\n\nPlease generate my daily brief."
+        
+        feedback_str = ""
+        if unconfirmed_tasks:
+            feedback_str = "\n\nAlso, please ask the user how long these tasks from yesterday actually took:\n"
+            feedback_str += "\n".join([f"- {t['task_name']}" for t in unconfirmed_tasks])
+            feedback_str += "\nAsk them to reply to this message with the durations (e.g. 'Task took 60m')."
+
+        system_prompt = "You are Veloce, a productivity assistant. Provide a warm daily brief and ask for task feedback if requested."
+        user_prompt = f"Current Time: {now_iso}. Today's Schedule:\n{events_str}{feedback_str}\n\nPlease generate my daily brief."
 
         try:
             self._rate_limiter.acquire()
