@@ -1,0 +1,22 @@
+<div id="gmail-tab-wrapper" class="fade-in google-tab-wrapper">
+  {% include "partials/google_section.html" ignore missing %}
+  
+  {% if is_google_authed %}
+    <div class="section fade-in" style="border-top: 3px solid #db4437; margin-top: 20px;">
+      <div class="section-head">
+        <h2 class="section-title">Gmail Automation</h2>
+        <p class="section-sub">Automatically scan your inbox for new tasks and deadlines.</p>
+      </div>
+    
+      <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+        <label style="display: flex; align-items: center; cursor: pointer; font-weight: 400; gap: 8px; width: auto;">
+          <input type="checkbox" name="enable_gmail_sync" value="true" {% if values.get('enable_gmail_sync') %}checked{%
+            endif %} style="width: 18px; height: 18px;">
+          Enable automatic inbox scanning
+        </label>
+      </div>
+      <p class="muted" style="margin-top: 6px;">Veloce will check for new emails every minute and schedule tasks
+        automatically.</p>
+    </div>
+  {% endif %}
+</div>

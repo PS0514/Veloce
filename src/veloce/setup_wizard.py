@@ -214,7 +214,7 @@ def google_oauth_callback():
     session["ui_notif"] = "Google login completed successfully!"
     
     # Redirect cleanly back to the home page, specifically opening the Google tab
-    return redirect("/?tab=google")
+    return redirect("/?tab=calendar")
 
 
 def _get_fresh_google_token() -> str:
@@ -911,7 +911,7 @@ def action_google_logout():
     
     values = current_values()
     return render_template(
-        "partials/tab_google.html",
+        "partials/tab_calendar.html",
         values=values,
         is_google_authed=False,
         google_info=""
@@ -960,16 +960,27 @@ def tab_telegram():
     )
 
 
-@APP.route("/tab/google", methods=["GET"])
-def tab_google():
+@APP.route("/tab/calendar", methods=["GET"])
+def tab_calendar():
     values = current_values()
     is_google_authed, google_status = get_google_connection_status(values)
     _, google_info = try_auto_load_google_calendars()
     return render_template(
-        "partials/tab_google.html", 
+        "partials/tab_calendar.html", 
         values=values, 
         is_google_authed=is_google_authed, 
         google_info=google_info
+    )
+
+
+@APP.route("/tab/gmail", methods=["GET"])
+def tab_gmail():
+    values = current_values()
+    is_google_authed, google_status = get_google_connection_status(values)
+    return render_template(
+        "partials/tab_gmail.html", 
+        values=values, 
+        is_google_authed=is_google_authed
     )
 
 

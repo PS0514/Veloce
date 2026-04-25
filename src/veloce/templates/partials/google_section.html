@@ -12,7 +12,7 @@
       <span>✓ Connected to Google Services</span>
       <button type="button" 
               hx-post="/action/google-logout" 
-              hx-target="#google-tab-wrapper" 
+              hx-target="closest .google-tab-wrapper" 
               hx-swap="outerHTML" 
               style="background: transparent; color: #e76f51; border: 1px solid #f6bcae; padding: 4px 10px; font-size: 0.8rem; box-shadow: none;">
         Disconnect

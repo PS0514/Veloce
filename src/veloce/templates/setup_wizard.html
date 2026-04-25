@@ -399,10 +399,16 @@
         <strong style="color: var(--ink);">Telegram</strong>
       </div>
 
-      <div class="integration-card" hx-get="/tab/google" hx-target="#integration-content">
-        <img src="/static/logos/Google.png" class="integration-icon" alt="Google"
-          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>G</text></svg>'">
-        <strong style="color: var(--ink);">Google</strong>
+      <div class="integration-card" hx-get="/tab/calendar" hx-target="#integration-content">
+        <img src="/static/logos/google-calendar.png" class="integration-icon" alt="Calendar"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>'">
+        <strong style="color: var(--ink);">Calendar</strong>
+      </div>
+
+      <div class="integration-card" hx-get="/tab/gmail" hx-target="#integration-content">
+        <img src="/static/logos/gmail.png" class="integration-icon" alt="Gmail"
+          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✉️</text></svg>'">
+        <strong style="color: var(--ink);">Gmail</strong>
       </div>
 
       <div class="integration-card" hx-get="/tab/notifications" hx-target="#integration-content">
@@ -438,8 +444,10 @@
     </div>
 
     <div id="integration-content" style="min-height: 350px;">
-      {% if active_tab == 'google' %}
-      <div hx-get="/tab/google" hx-trigger="load"></div>
+      {% if active_tab == 'google' or active_tab == 'calendar' %}
+      <div hx-get="/tab/calendar" hx-trigger="load"></div>
+      {% elif active_tab == 'gmail' %}
+      <div hx-get="/tab/gmail" hx-trigger="load"></div>
       {% elif active_tab == 'telegram' %}
       <div hx-get="/tab/telegram" hx-trigger="load"></div>
       {% else %}
