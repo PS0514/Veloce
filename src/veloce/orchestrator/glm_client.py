@@ -3,7 +3,7 @@ import requests
 from typing import Optional, List
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
-from veloce.orchestrator.models import ContextItem, GlmExtraction, NormalizedInbound, TaskCandidate
+from veloce.orchestrator.models import ContextItem, GlmExtraction, IntentExtraction, NormalizedInbound, TaskCandidate
 
 logger = get_logger(__name__)
 
@@ -40,6 +40,19 @@ class GlmClient:
         except Exception as exc:
             log_warning(logger, "glm_client_remote_failed", error=str(exc))
             return GlmExtraction(tasks=[], metadata={"error": str(exc), "remote": True})
+
+    def classify_intent(self, inbound: NormalizedInbound) -> IntentExtraction:
+        url = f"{self.service_url}/classify-intent"
+        payload = {"inbound": inbound.dict()}
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            resp.raise_for_status()
+            return IntentExtraction(**resp.json())
+        except Exception as exc:
+            log_warning(logger, "glm_client_classify_intent_failed", error=str(exc))
+            # Fallback to SCHEDULE_TASK for backward compatibility or default behavior
+            from veloce.orchestrator.models import UserIntent
+            return IntentExtraction(intent=UserIntent.SCHEDULE_TASK, confidence=0.0)
 
     def strategize_tasks(
         self,
@@ -82,6 +95,21 @@ class GlmClient:
         except Exception as exc:
             log_warning(logger, "glm_client_generate_brief_failed", error=str(exc))
             return "Good morning! Hope you have a productive day."
+
+    def generate_chat_response(self, inbound: NormalizedInbound, context: list[ContextItem] | None, request_id: str | None) -> str:
+        url = f"{self.service_url}/chat"
+        payload = {
+            "text": inbound.raw_text,
+            "context": [item.dict() for item in (context or [])],
+            "request_id": request_id
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=60)
+            resp.raise_for_status()
+            return resp.json().get("reply", "I'm not sure what to say to that!")
+        except Exception as exc:
+            log_warning(logger, "glm_client_chat_failed", error=str(exc))
+            return "I'm having trouble connecting to my brain right now."
 
 class _RateLimiter:
     """Legacy placeholder if needed by other imports."""

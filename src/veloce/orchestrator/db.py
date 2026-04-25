@@ -37,6 +37,13 @@ class AutomatedMessageRow:
     task_name: str | None = None
 
 
+@dataclass(frozen=True)
+class MemoryRow:
+    chat_id: str | int
+    memory_text: str
+    category: str | None = None
+
+
 class SQLiteStore:
     def __init__(self, db_path: str) -> None:
         path = Path(db_path)
@@ -53,9 +60,27 @@ class SQLiteStore:
 
     def _initialize(self) -> None:
         with self._connect() as conn:
+            # 1. Telegram Context Table
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS telegram_context (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    sender_id TEXT,
+                    chat_title TEXT,
+                    message TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    date TEXT,
+                    inserted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(chat_id, message_id)
+                )
+                """
+            )
+            # 2. Gmail Context Table (New)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gmail_context (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     chat_id TEXT NOT NULL,
                     message_id TEXT NOT NULL,
@@ -110,8 +135,25 @@ class SQLiteStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS user_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL,
+                    memory_text TEXT NOT NULL,
+                    category TEXT,
+                    inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_telegram_context_chat_date
                 ON telegram_context(chat_id, date DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_gmail_context_chat_date
+                ON gmail_context(chat_id, date DESC)
                 """
             )
             conn.execute(
@@ -126,13 +168,22 @@ class SQLiteStore:
                 ON automated_messages(chat_id, message_id)
                 """
             )
-            # FTS5 table for keyword retrieval while retaining base table source-of-truth.
+
+            # FTS5 tables for keyword retrieval
             conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS telegram_context_fts
                 USING fts5(message, chat_title, content='telegram_context', content_rowid='id')
                 """
             )
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS gmail_context_fts
+                USING fts5(message, chat_title, content='gmail_context', content_rowid='id')
+                """
+            )
+
+            # Triggers for Telegram
             conn.execute(
                 """
                 CREATE TRIGGER IF NOT EXISTS telegram_context_ai
@@ -165,13 +216,49 @@ class SQLiteStore:
                 END
                 """
             )
+
+            # Triggers for Gmail
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS gmail_context_ai
+                AFTER INSERT ON gmail_context
+                BEGIN
+                    INSERT INTO gmail_context_fts(rowid, message, chat_title)
+                    VALUES (new.id, new.message, COALESCE(new.chat_title, ''));
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS gmail_context_ad
+                AFTER DELETE ON gmail_context
+                BEGIN
+                    INSERT INTO gmail_context_fts(gmail_context_fts, rowid, message, chat_title)
+                    VALUES('delete', old.id, old.message, COALESCE(old.chat_title, ''));
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS gmail_context_au
+                AFTER UPDATE ON gmail_context
+                BEGIN
+                    INSERT INTO gmail_context_fts(gmail_context_fts, rowid, message, chat_title)
+                    VALUES('delete', old.id, old.message, COALESCE(old.chat_title, ''));
+                    INSERT INTO gmail_context_fts(rowid, message, chat_title)
+                    VALUES (new.id, new.message, COALESCE(new.chat_title, ''));
+                END
+                """
+            )
+
             log_info(logger, "db_store_ready", db_path=self.db_path)
 
     def ingest_context(self, row: ContextRow) -> bool:
+        table_name = "gmail_context" if row.source == "gmail" else "telegram_context"
         with self._connect() as conn:
             cursor = conn.execute(
-                """
-                INSERT OR IGNORE INTO telegram_context (
+                f"""
+                INSERT OR IGNORE INTO {table_name} (
                     chat_id, message_id, sender_id, chat_title, message, source, date
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -193,8 +280,14 @@ class SQLiteStore:
                 message_id=row.message_id,
                 inserted=inserted,
                 source=row.source,
+                table=table_name,
             )
             return inserted
+
+    def get_processed_gmail_ids(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT message_id FROM gmail_context").fetchall()
+            return [row["message_id"] for row in rows]
 
     def ingest_scheduled_task(self, row: ScheduledTaskRow) -> bool:
         with self._connect() as conn:
@@ -248,6 +341,35 @@ class SQLiteStore:
             )
             return inserted
 
+    def ingest_memory(self, row: MemoryRow) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO user_memories (
+                    chat_id, memory_text, category
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    str(row.chat_id),
+                    row.memory_text,
+                    row.category,
+                ),
+            )
+            log_info(
+                logger,
+                "db_ingest_memory",
+                chat_id=row.chat_id,
+                memory_text=row.memory_text[:50] + "...",
+            )
+            return cursor.rowcount > 0
+
+    def retrieve_memories_by_chat(self, chat_id: str | int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT memory_text, category FROM user_memories WHERE chat_id = ? ORDER BY inserted_at DESC",
+                (str(chat_id),),
+            ).fetchall()
+
     def is_automated_message(self, chat_id: str | int, message_id: str | int) -> bool:
         with self._connect() as conn:
             row = conn.execute(
@@ -265,9 +387,15 @@ class SQLiteStore:
             return row["trigger_msg_id"] if row else None
 
     def retrieve_message(self, chat_id: str | int, message_id: str | int) -> sqlite3.Row | None:
+        table_name = "gmail_context" if str(chat_id) == "gmail_inbox" else "telegram_context"
         with self._connect() as conn:
             return conn.execute(
-                "SELECT chat_id, message_id, sender_id, chat_title, message, source, date FROM telegram_context WHERE chat_id = ? AND message_id = ?",
+                f"""
+                SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date, am.bot_type
+                FROM {table_name} tc
+                LEFT JOIN automated_messages am ON tc.chat_id = am.chat_id AND tc.message_id = am.message_id
+                WHERE tc.chat_id = ? AND tc.message_id = ?
+                """,
                 (str(chat_id), str(message_id)),
             ).fetchone()
 
@@ -287,10 +415,16 @@ class SQLiteStore:
         if not title:
             return None
         with self._connect() as conn:
+            # Check telegram first, then gmail
             row = conn.execute(
                 "SELECT chat_id FROM telegram_context WHERE chat_title = ? LIMIT 1",
                 (title,),
             ).fetchone()
+            if not row:
+                row = conn.execute(
+                    "SELECT chat_id FROM gmail_context WHERE chat_title = ? LIMIT 1",
+                    (title,),
+                ).fetchone()
             return row["chat_id"] if row else None
 
     def update_task_feedback(self, calendar_event_id: str, actual_duration_minutes: int) -> bool:
@@ -354,6 +488,9 @@ class SQLiteStore:
     ) -> list[sqlite3.Row]:
         query = query.strip()
         fetch_limit = max(limit * 5, 20)
+        
+        table_name = "gmail_context" if str(chat_id) == "gmail_inbox" else "telegram_context"
+        fts_table = f"{table_name}_fts"
 
         log_info(
             logger,
@@ -363,6 +500,7 @@ class SQLiteStore:
             limit=limit,
             since=since,
             fetch_limit=fetch_limit,
+            table=table_name,
         )
 
         with self._connect() as conn:
@@ -382,10 +520,11 @@ class SQLiteStore:
 
             if clean_query:
                 sql = f"""
-                    SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
-                    FROM telegram_context_fts f
-                    JOIN telegram_context tc ON tc.id = f.rowid
-                    WHERE {' AND '.join(where)} AND telegram_context_fts MATCH ?
+                    SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date, am.bot_type
+                    FROM {fts_table} f
+                    JOIN {table_name} tc ON tc.id = f.rowid
+                    LEFT JOIN automated_messages am ON tc.chat_id = am.chat_id AND tc.message_id = am.message_id
+                    WHERE {' AND '.join(where)} AND {fts_table} MATCH ?
                     ORDER BY tc.date DESC
                     LIMIT ?
                 """
@@ -402,8 +541,9 @@ class SQLiteStore:
                     return rows
 
             sql = f"""
-                SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
-                FROM telegram_context tc
+                SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date, am.bot_type
+                FROM {table_name} tc
+                LEFT JOIN automated_messages am ON tc.chat_id = am.chat_id AND tc.message_id = am.message_id
                 WHERE {' AND '.join(where)}
                 ORDER BY tc.date DESC
                 LIMIT ?

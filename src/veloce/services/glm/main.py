@@ -14,8 +14,10 @@ from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import (
     ContextItem,
     GlmExtraction,
+    IntentExtraction,
     NormalizedInbound,
     TaskCandidate,
+    UserIntent,
 )
 
 logger = get_logger(__name__)
@@ -63,6 +65,9 @@ class ExtractRequest(BaseModel):
     request_id: Optional[str] = None
     conflict_context: Optional[str] = None
 
+class ClassifyIntentRequest(BaseModel):
+    inbound: NormalizedInbound
+
 class StrategizeRequest(BaseModel):
     task: TaskCandidate
     inbound: NormalizedInbound
@@ -75,6 +80,12 @@ class BriefRequest(BaseModel):
     unconfirmed_tasks: Optional[List[dict]] = None
     now_iso: str
     timezone: str
+
+
+class ChatRequest(BaseModel):
+    text: str
+    context: Optional[List[ContextItem]] = None
+    request_id: Optional[str] = None
 
 class GlmService:
     def __init__(self) -> None:
@@ -194,7 +205,8 @@ class GlmService:
                     start_time_iso=item.get("start_time_iso"),
                     estimated_duration_minutes=item.get("estimated_duration_minutes", 60),
                     confidence=1.0,
-                    needs_clarification=False
+                    needs_clarification=False,
+                    study_guide=item.get("study_guide")
                 )
                 final_tasks.append(tc)
                 if tc.task_name == task.task_name:
@@ -209,6 +221,72 @@ class GlmService:
         except Exception as e:
             log_warning(logger, "glm_strategize_failed", error=str(e), request_id=request_id)
             return [task]
+
+    def classify_intent(self, inbound: NormalizedInbound) -> IntentExtraction:
+        if not self.api_key or self._client is None:
+            return IntentExtraction(intent=UserIntent.GENERAL_CHAT, confidence=0.0)
+
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+        system_prompt_path = base_dir / "glm" / "prompt" / "intent_system_prompt.txt"
+
+        try:
+            system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            log_warning(logger, "missing_intent_prompt")
+            return IntentExtraction(intent=UserIntent.SCHEDULE_TASK, confidence=0.5)
+
+        user_prompt = f"Inbound Message: {inbound.raw_text}\nContext Date: {inbound.inbound_date}"
+
+        try:
+            self._rate_limiter.acquire()
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content if response.choices else None
+            if not content:
+                return IntentExtraction(intent=UserIntent.GENERAL_CHAT, confidence=0.0)
+            
+            clean_content = self._clean_json_content(content)
+            parsed = json.loads(clean_content)
+            return IntentExtraction(**parsed)
+        except Exception as exc:
+            log_warning(logger, "glm_classify_intent_failed", error=str(exc))
+            return IntentExtraction(intent=UserIntent.SCHEDULE_TASK, confidence=0.0)
+
+    def generate_chat_response(self, text: str, context: Optional[List[ContextItem]] = None, request_id: str | None = None) -> str:
+        if not self.api_key or self._client is None:
+            return "I'm not sure what to say to that!"
+
+        context_str = ""
+        if context:
+            context_lines = ["Conversation Context:"]
+            for item in context:
+                context_lines.append(f"- {item.message}")
+            context_str = "\n".join(context_lines)
+
+        system_prompt = "You are Veloce, a helpful productivity assistant. Engage in friendly conversation, answer questions, or help with tasks."
+        user_prompt = f"{context_str}\n\nUser: {text}\n\nVeloce:"
+
+        try:
+            self._rate_limiter.acquire()
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+            )
+            return response.choices[0].message.content or "I'm here to help!"
+        except Exception as exc:
+            log_warning(logger, "glm_generate_chat_failed", error=str(exc))
+            return "I'm having trouble thinking clearly right now."
 
     def extract_tasks(
         self, 
@@ -377,6 +455,10 @@ def extract(payload: ExtractRequest):
         conflict_context=payload.conflict_context
     )
 
+@app.post("/classify-intent", response_model=IntentExtraction)
+def classify_intent(payload: ClassifyIntentRequest):
+    return glm_service.classify_intent(inbound=payload.inbound)
+
 @app.post("/strategize", response_model=List[TaskCandidate])
 def strategize(payload: StrategizeRequest):
     return glm_service.strategize_tasks(
@@ -395,6 +477,16 @@ def generate_brief(payload: BriefRequest):
         timezone=payload.timezone
     )
     return {"message": message}
+
+
+@app.post("/chat")
+def chat(payload: ChatRequest):
+    reply = glm_service.generate_chat_response(
+        text=payload.text, 
+        context=payload.context, 
+        request_id=payload.request_id
+    )
+    return {"reply": reply}
 
 if __name__ == "__main__":
     import uvicorn

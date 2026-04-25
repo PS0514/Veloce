@@ -1,7 +1,21 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class UserIntent(str, Enum):
+    SCHEDULE_TASK = "schedule_task"
+    QUERY_CALENDAR = "query_calendar"
+    SAVE_MEMORY = "save_memory"
+    GENERAL_CHAT = "general_chat"
+
+
+class IntentExtraction(BaseModel):
+    intent: UserIntent
+    confidence: float
+    extracted_entities: dict[str, Any] = Field(default_factory=dict)
 
 
 class SchedulerInbound(BaseModel):
@@ -32,6 +46,28 @@ class NormalizedInbound(BaseModel):
     reply_to_msg_id: Any = None
     reply_to_text: str | None = None
 
+    @property
+    def is_direct_interaction(self) -> bool:
+        """Determines if the bot is being directly addressed or is in a private/primary context."""
+        from veloce.runtime_config import get_config_value
+        import os
+        
+        # 1. Is it a reply to a bot message?
+        if self.reply_to_me:
+            return True
+            
+        # 2. Is it in the primary designated notification DM/Group?
+        primary_chat_id = str(get_config_value("telegram_notification_chat_id") or os.getenv("TELEGRAM_CHAT_ID", ""))
+        if str(self.chat_id) == primary_chat_id:
+            return True
+            
+        # 3. (Optional) Does the raw text mention the bot's handle?
+        bot_username = str(get_config_value("telegram_bot_username") or os.getenv("TELEGRAM_BOT_USERNAME", "")).lower()
+        if bot_username and f"@{bot_username}" in self.raw_text.lower():
+            return True
+            
+        return False
+
 
 class TaskCandidate(BaseModel):
     task_name: str = "Unnamed Task"
@@ -41,6 +77,7 @@ class TaskCandidate(BaseModel):
     confidence: float = Field(default=0.5, ge=0, le=1)
     needs_clarification: bool = False
     clarification_question: str | None = None
+    study_guide: str | None = None  # New field for the Strategist Agent to populate
 
 
 class GlmExtraction(BaseModel):
@@ -63,6 +100,8 @@ class ContextItem(BaseModel):
     date: str | None = None
     source: str
     score: float
+    is_automated: bool = False
+    bot_type: str | None = None
 
 
 class ContextRetrieveResponse(BaseModel):

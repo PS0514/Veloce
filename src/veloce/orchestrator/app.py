@@ -224,6 +224,12 @@ def telegram_context_ingest(
     return _process_single(payload)
 
 
+@router.get("/gmail-context-ids")
+def get_gmail_context_ids() -> list[str]:
+    """Retrieve all processed Gmail message IDs to help the Gmail service with deduplication on startup."""
+    return services.store.get_processed_gmail_ids()
+
+
 @router.post("/telegram-context-retrieve", response_model=ContextRetrieveResponse)
 def telegram_context_retrieve(payload: ContextRetrieveRequest) -> ContextRetrieveResponse:
     req_id = _request_id(source="context_retrieve", chat_id=payload.chat_id, message_id=None)

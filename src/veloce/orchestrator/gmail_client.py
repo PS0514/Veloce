@@ -65,7 +65,7 @@ def _get_fresh_google_token() -> str:
 
 class GmailClient:
     def __init__(self) -> None:
-        self.enabled = os.getenv("ENABLE_GMAIL_SYNC", "true").lower() == "true"
+        self.enabled = str(get_config_value("enable_gmail_sync", "true")).lower() == "true"
 
     def list_messages(self, query: str = "", max_results: int = 10) -> List[dict]:
         """List messages matching a query."""

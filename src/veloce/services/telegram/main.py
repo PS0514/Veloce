@@ -64,6 +64,12 @@ async def process_batch(chat_id: int):
     # Handle results
     for result in results:
         automated_payloads = []
+        state = result.get("state")
+
+        if state == "ignored_group_chat":
+            log_info(logger, "telegram_service_ignoring_general_chat", chat_id=chat_id)
+            continue
+
         if result.get("needs_clarification"):
             question = result.get("clarification_question", "Details?")
             task_obj = result.get('selected_task') or {}
@@ -119,35 +125,52 @@ async def process_batch(chat_id: int):
                     if not sent_dm and config.notification_chat_id:
                         await send_notification_internal(f"❓ **Clarification Needed** (Send Failed)\nQuestion: {question}")
 
-        elif result.get("scheduled"):
-            task_name = result.get("selected_task", {}).get("task_name", "Task")
-            res_chat_title = result.get("chat_title", "Unknown Chat")
-            src_msg_id = result.get("source_message_id")
-            
-            if client:
-                msg = await client.send_message(chat_id, f"✅ **[VeloceBot] Scheduled**: **{task_name}**")
-                automated_payloads.append({
-                    "chat_id": chat_id,
-                    "message_id": msg.id,
-                    "bot_type": "userbot",
-                    "trigger_msg_id": src_msg_id,
-                    "task_name": task_name
-                })
-            
-            if config.notification_chat_id:
-                notif_text = f"🚀 Task Scheduled\nTask: {task_name}\nSource: {res_chat_title}"
-                res = await send_notification_internal(notif_text)
-                if res.get("status") == "sent":
+            elif result.get("scheduled"):
+                task_name = result.get("selected_task", {}).get("task_name", "Task")
+                res_chat_title = result.get("chat_title", "Unknown Chat")
+                src_msg_id = result.get("source_message_id")
+                
+                if client:
+                    msg = await client.send_message(chat_id, f"✅ **[VeloceBot] Scheduled**: **{task_name}**")
                     automated_payloads.append({
-                        "chat_id": res["chat_id"],
-                        "message_id": res["message_id"],
-                        "bot_type": res["bot_type"],
+                        "chat_id": chat_id,
+                        "message_id": msg.id,
+                        "bot_type": "userbot",
                         "trigger_msg_id": src_msg_id,
                         "task_name": task_name
                     })
-        
-        if automated_payloads:
-            await post_to_automated_ingest_async(automated_payloads)
+                
+                if config.notification_chat_id:
+                    notif_text = f"🚀 Task Scheduled\nTask: {task_name}\nSource: {res_chat_title}"
+                    res = await send_notification_internal(notif_text)
+                    if res.get("status") == "sent":
+                        automated_payloads.append({
+                            "chat_id": res["chat_id"],
+                            "message_id": res["message_id"],
+                            "bot_type": res["bot_type"],
+                            "trigger_msg_id": src_msg_id,
+                            "task_name": task_name
+                        })
+
+            elif state in ("general_chat_replied", "calendar_query_answered", "memory_saved"):
+                reason = result.get("reason", "")
+                src_msg_id = result.get("source_message_id")
+                if client:
+                    try:
+                        msg = await client.send_message(chat_id, reason, reply_to=src_msg_id)
+                        automated_payloads.append({
+                            "chat_id": chat_id,
+                            "message_id": msg.id,
+                            "bot_type": "userbot",
+                            "trigger_msg_id": src_msg_id,
+                            "task_name": "General Chat"
+                        })
+                        log_info(logger, "telegram_service_sent_reply", chat_id=chat_id, state=state)
+                    except Exception as exc:
+                        log_warning(logger, "telegram_service_reply_failed", error=str(exc))
+            
+            if automated_payloads:
+                await post_to_automated_ingest_async(automated_payloads)
 
 async def post_to_automated_ingest_async(payload: dict | list[dict], max_retries: int = 3) -> bool:
     if not config.webhook_url:

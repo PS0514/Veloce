@@ -65,15 +65,23 @@ class ContextService:
             if query and score <= 0.15:
                 filtered_low_score += 1
                 continue
+            
+            bot_type = row["bot_type"] if "bot_type" in row.keys() else None
+            is_automated = bool(bot_type)
+            prefix = f"[{bot_type.upper()}]" if is_automated else "[USER]"
+            prefixed_message = f"{prefix}: {row['message']}"
+
             scored.append(
                 ContextItem(
                     message_id=row["message_id"],
                     sender_id=row["sender_id"],
                     chat_title=row["chat_title"],
-                    message=row["message"],
+                    message=prefixed_message,
                     date=row["date"],
                     source=row["source"],
                     score=score,
+                    is_automated=is_automated,
+                    bot_type=bot_type,
                 )
             )
 
@@ -113,14 +121,21 @@ class ContextService:
         if not trigger_row:
             return []
             
+        bot_type = trigger_row["bot_type"] if "bot_type" in trigger_row.keys() else None
+        is_automated = bool(bot_type)
+        prefix = f"[{bot_type.upper()}]" if is_automated else "[USER]"
+        prefixed_message = f"{prefix}: {trigger_row['message']}"
+
         return [
             ContextItem(
                 message_id=trigger_row["message_id"],
                 sender_id=trigger_row["sender_id"],
                 chat_title=trigger_row["chat_title"],
-                message=trigger_row["message"],
+                message=prefixed_message,
                 date=trigger_row["date"],
                 source=trigger_row["source"],
                 score=1.0,
+                is_automated=is_automated,
+                bot_type=bot_type,
             )
         ]

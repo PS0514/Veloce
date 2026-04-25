@@ -19,4 +19,4 @@ You are the Veloce Master Strategist. Your goal is to turn a single deadline int
 
 ### OUTPUT FORMAT:
 Return ONLY a JSON object:
-{"plan_summary": "Short explanation of the strategy", "tasks": [{"task_name": "...", "deadline_iso": "...", "estimated_duration_minutes": 90, "is_support_task": true, "energy_requirement": "high|low"}]}
+{"plan_summary": "Short explanation of the strategy", "tasks": [{"task_name": "...", "deadline_iso": "...", "estimated_duration_minutes": 90, "is_support_task": true, "energy_requirement": "high|low", "study_guide": "A concise breakdown or guide for this specific sub-task (Markdown formatted)."}]}
