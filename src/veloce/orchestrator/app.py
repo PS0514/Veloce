@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-def _request_id(*, source: str | None, chat_id: int | None, message_id: int | None) -> str:
+def _request_id(*, source: str | None, chat_id: str | int | None, message_id: str | int | None) -> str:
     source_part = (source or "unknown").strip() or "unknown"
     chat_part = str(chat_id) if chat_id is not None else "na"
     message_part = str(message_id) if message_id is not None else "na"

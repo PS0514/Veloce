@@ -23,4 +23,23 @@
       <button type="button" onclick="applySelectedCalendar()" style="background: #1b4965; padding: 6px 12px; font-size: 0.9rem;">Use selected calendar</button>
     </div>
   </div>
+
+  <div class="section" style="border-top: 3px solid #ea4335; margin-top: 20px;">
+    <div class="section-head">
+      <h2 class="section-title">Gmail Integration</h2>
+      <p class="section-sub">Extract tasks from your emails automatically.</p>
+    </div>
+    <div class="panel" style="background: #fff5f5; border: 1px solid #fab1a0;">
+      <p style="margin-bottom: 12px;">Veloce can read your inbox to find appointment requests, deadlines, and tasks.</p>
+      <div class="actions">
+        <button type="button" 
+                hx-post="/action/sync-gmail-history" 
+                hx-target="#notifications" 
+                hx-swap="innerHTML"
+                style="background: #ea4335; padding: 8px 16px;">
+          Sync Last Week's Emails
+        </button>
+      </div>
+    </div>
+  </div>
 </div>

@@ -29,6 +29,8 @@ GOOGLE_REDIRECT_PATH = "/google/oauth/callback"
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
 ]
 TELEGRAM_LOGIN_SESSION_KEY = "telegram_login_state"
 
@@ -873,6 +875,26 @@ def action_google_logout():
         is_google_authed=False,
         google_info=""
     ) + render_template("partials/notifications_oob.html", info="Logged out of Google.")
+
+
+@APP.route("/action/sync-gmail-history", methods=["POST"])
+def action_sync_gmail_history():
+    try:
+        # Trigger the sync via the gmail service
+        # The gmail service might not be running yet if it's managed by docker, 
+        # but in local dev we can try to call it.
+        # However, it's safer to just inform the user we are starting it.
+        # Or better, we can call the endpoint of the gmail service if we know its URL.
+        gmail_service_url = os.getenv("GMAIL_SERVICE_URL", "http://localhost:8005")
+        resp = requests.post(f"{gmail_service_url}/sync-last-week", timeout=5)
+        resp.raise_for_status()
+        success = "Gmail history sync started in the background."
+        error = ""
+    except Exception as exc:
+        success = ""
+        error = f"Failed to start Gmail sync: {exc}. Make sure the Gmail service is running."
+    
+    return render_template("partials/notifications_oob.html", success=success, error=error)
 
 
 # ---------------------------------------------------------------------------

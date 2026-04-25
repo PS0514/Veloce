@@ -68,3 +68,21 @@ services:
       TZ: Asia/Kuala_Lumpur
     volumes:
       - ..:/app
+
+  gmail_service:
+    build:
+      context: ..
+      dockerfile: deploy/gmail.Dockerfile
+    container_name: veloce_gmail
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    env_file:
+      - ../.env
+    depends_on:
+      - orchestrator
+    environment:
+      N8N_WEBHOOK_URL: http://orchestrator:8000/veloce-task-scheduler
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - ..:/app
