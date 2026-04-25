@@ -49,6 +49,13 @@ Veloce runs orchestration fully natively in Python without relying on external w
 
 *(Compatibility launchers `python setup.py` and `python listener.py` also work).*
 
+## Extension Setup (Developer Mode)
+To load the Veloce extension into your browser, follow these steps:
+1. Open Extensions: In Google Chrome, navigate to chrome://extensions/.
+2. Enable Developer Mode: Toggle the Developer mode switch in the top-right corner.
+3. Load the Extension: Click the Load unpacked button.
+4. Select Folder: Navigate to your local Veloce directory and select the chrome-extension folder.
+
 ## Environment Variables & Configuration
 
 Veloce relies on a mix of `.env` for static secrets and `data/veloce_config.json` for dynamic runtime configurations (like OAuth tokens and UI-configurable filters).
