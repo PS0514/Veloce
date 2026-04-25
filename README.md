@@ -57,7 +57,7 @@ Veloce includes a custom-built, interactive **Setup Wizard** to handle the compl
 python scripts/run_setup.py
 ```
 *   Visit `http://127.0.0.1:8765`
-*   Connect Telegram (scan QR/Code)
+*   Connect Telegram (Phone number)
 *   Connect Google (OAuth)
 *   Configure **Energy Windows** (Deep/Shallow work hours)
 
