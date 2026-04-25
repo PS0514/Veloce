@@ -178,20 +178,21 @@ class SchedulerPipeline:
                 "shallow_work": f"{get_config_value('shallow_work_start', '14:00')} - {get_config_value('shallow_work_end', '17:00')}"
             }
             
-            # 2. Fetch Workload Context (next 7 days)
+            # 2. Fetch Workload Context (next 4 days for better performance)
             workload_context = []
             try:
                 tz = ZoneInfo(inbound.timezone)
                 now_local = datetime.now(tz)
-                end_of_week = now_local + timedelta(days=7)
+                end_of_period = now_local + timedelta(days=4)
                 
                 raw_events = self.scheduling_engine.calendar_client.list_events(
                     time_min=now_local,
-                    time_max=end_of_week
+                    time_max=end_of_period
                 )
+                # SPREAD optimization: Limit to 15 events max to keep AI fast
                 workload_context = [
                     {"summary": e.summary, "start": e.start.isoformat(), "end": e.end.isoformat()}
-                    for e in raw_events
+                    for e in raw_events[:15]
                 ]
             except Exception as e:
                 log_warning(logger, "pipeline_workload_fetch_failed", error=str(e))

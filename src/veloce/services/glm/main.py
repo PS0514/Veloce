@@ -148,15 +148,30 @@ class GlmService:
 
         try:
             self._rate_limiter.acquire(request_id=request_id)
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-            )
+            
+            # RETRY LOGIC for 504 Resilience
+            max_retries = 3
+            last_err = None
+            for attempt in range(max_retries):
+                try:
+                    response = self._client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.1,
+                        response_format={"type": "json_object"},
+                        timeout=120.0 # Increased timeout
+                    )
+                    break # Success!
+                except Exception as e:
+                    last_err = e
+                    if attempt < max_retries - 1:
+                        log_warning(logger, "glm_strategize_retry", attempt=attempt+1, error=str(e))
+                        time.sleep(2 * (attempt + 1)) # Backoff
+                    else:
+                        raise e
 
             content = response.choices[0].message.content if response.choices else None
             if not content:
