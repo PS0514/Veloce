@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
@@ -12,6 +13,17 @@ logger = get_logger(__name__)
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def _clean_html(raw_html: str) -> str:
+    """Remove HTML tags and excessive whitespace."""
+    # Remove script and style elements
+    clean = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', raw_html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove all other tags
+    clean = re.sub(r'<[^>]+>', ' ', clean)
+    # Normalize whitespace
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
 
 
 def _get_fresh_google_token() -> str:
@@ -123,17 +135,14 @@ class GmailClient:
 
     @staticmethod
     def parse_message(message: dict) -> dict:
-        """Parse Gmail message into a simpler format."""
+        """Parse Gmail message into a simpler format with HTML cleaning and truncation."""
         headers = message.get("payload", {}).get("headers", [])
         
         subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
         sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "Unknown Sender")
-        date_raw = next((h["value"] for h in headers if h["name"].lower() == "date"), None)
         
         # Try to parse date
         try:
-            # Gmail date headers can be complex, but let's try a simple approach or just keep it as is
-            # For now, let's just use the internalDate timestamp from Gmail (milliseconds)
             internal_date = int(message.get("internalDate", 0)) / 1000
             date_iso = datetime.fromtimestamp(internal_date, tz=timezone.utc).isoformat()
         except Exception:
@@ -141,6 +150,7 @@ class GmailClient:
 
         # Extract body
         body = ""
+        html_found = False
         parts = [message.get("payload", {})]
         while parts:
             part = parts.pop(0)
@@ -151,12 +161,17 @@ class GmailClient:
                 data = part.get("body", {}).get("data", "")
                 if data:
                     body += base64.urlsafe_b64decode(data).decode("utf-8")
-            elif part.get("mimeType") == "text/html" and not body:
-                # Fallback to HTML if no plain text
-                data = part.get("body", {}).get("data", "")
-                if data:
-                    # Very basic HTML stripping could go here if needed
-                    body += base64.urlsafe_b64decode(data).decode("utf-8")
+            elif part.get("mimeType") == "text/html":
+                html_found = True
+                if not body: # Only use HTML if we don't have plain text yet
+                    data = part.get("body", {}).get("data", "")
+                    if data:
+                        raw_html = base64.urlsafe_b64decode(data).decode("utf-8")
+                        body = _clean_html(raw_html)
+
+        # Truncation for AI performance (Max 2000 chars)
+        if len(body) > 2000:
+            body = body[:2000] + "... [TRUNCATED]"
 
         return {
             "id": message["id"],

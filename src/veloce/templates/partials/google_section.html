@@ -1,12 +1,15 @@
 <div id="google-section" class="section">
   <div class="section-head">
-    <h2 class="section-title">Google Authentication</h2>
-    <p class="section-sub">Connect your Google account to enable calendar scheduling.</p>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <img src="/static/logos/Google.png" style="width: 24px; height: 24px; object-fit: contain;" alt="Google">
+      <h2 class="section-title">Google Account</h2>
+    </div>
+    <p class="section-sub">Connect your Google account to enable calendar scheduling and Gmail automation.</p>
   </div>
 
   {% if is_google_authed %}
     <div class="ok" style="margin-top: 10px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: center;">
-      <span>✓ Connected to Google Calendar</span>
+      <span>✓ Connected to Google Services</span>
       <button type="button" 
               hx-post="/action/google-logout" 
               hx-target="#google-tab-wrapper" 

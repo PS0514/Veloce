@@ -104,6 +104,14 @@ async def gmail_poll_loop():
                     full_msg = gmail_client.get_message(msg_id)
                     parsed = gmail_client.parse_message(full_msg)
                     
+                    # SKIP MARKETING/NOREPLY
+                    sender_lower = parsed["sender"].lower()
+                    if any(x in sender_lower for x in ["noreply", "no-reply", "marketing", "newsletter", "shein", "shopee", "lazada", "deals", "offer", "promotion"]):
+                        log_info(logger, "gmail_skip_marketing", msg_id=msg_id, sender=parsed["sender"])
+                        processed_ids.add(msg_id)
+                        save_processed_id(msg_id)
+                        continue
+
                     payload = {
                         "source": "gmail",
                         "message_id": parsed["id"],

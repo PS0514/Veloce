@@ -33,6 +33,8 @@ class GlmClient:
         
         try:
             resp = requests.post(url, json=payload, timeout=300)
+            if resp.status_code == 422:
+                log_warning(logger, "glm_client_validation_error", detail=resp.json(), payload=payload)
             resp.raise_for_status()
             return GlmExtraction(**resp.json())
         except Exception as exc:

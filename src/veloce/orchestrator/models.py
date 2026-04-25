@@ -6,30 +6,30 @@ from pydantic import BaseModel, Field
 
 class SchedulerInbound(BaseModel):
     source: str = "telegram_userbot"
-    message_id: str | int | None = None
-    sender_id: str | int | None = None
-    chat_id: str | int | None = None
+    message_id: Any = None
+    sender_id: Any = None
+    chat_id: Any = None
     chat_title: str | None = None
     message: str | None = None
     raw_text: str | None = None
     date: str | None = None
     timezone: str | None = None
     reply_to_me: bool = False
-    reply_to_msg_id: str | int | None = None
+    reply_to_msg_id: Any = None
     reply_to_text: str | None = None
 
 
 class NormalizedInbound(BaseModel):
     source: str
-    message_id: str | int | None
-    sender_id: str | int | None
-    chat_id: str | int | None
+    message_id: Any
+    sender_id: Any
+    chat_id: Any
     chat_title: str | None
     inbound_date: str
     timezone: str
     raw_text: str
     reply_to_me: bool = False
-    reply_to_msg_id: str | int | None = None
+    reply_to_msg_id: Any = None
     reply_to_text: str | None = None
 
 
