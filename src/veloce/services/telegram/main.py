@@ -64,6 +64,40 @@ async def process_batch(chat_id: int):
     # Handle results
     for result in results:
         automated_payloads = []
+
+        # --- NEW CONVERSATIONAL ROUTING ---
+        if result.get("state") == "conversational_reply":
+            src_chat_id = result.get("source_chat_id")
+            bot_id = get_bot_id()
+            
+            # Only process the reply if the question was asked inside the designated bot/notification chat
+            is_bot_chat = (str(src_chat_id) == str(config.notification_chat_id)) or (bot_id and str(src_chat_id) == str(bot_id))
+            
+            if is_bot_chat:
+                reply_text = result.get("reason")
+                
+                # Send the reply directly to the bot chat
+                res = await send_notification_internal(reply_text)
+                
+                if res.get("status") == "sent":
+                    automated_payloads.append({
+                        "chat_id": res["chat_id"],
+                        "message_id": res["message_id"],
+                        "bot_type": res["bot_type"],
+                        "trigger_msg_id": result.get("source_message_id"),
+                        "task_name": "Conversational Reply"
+                    })
+            else:
+                # Silently ignore general questions asked in other groups
+                log_info(logger, "conversational_reply_ignored", reason="Query not in bot chat", chat_id=src_chat_id)
+            
+            if automated_payloads:
+                await post_to_automated_ingest_async(automated_payloads)
+            
+            # Skip the scheduling/clarification logic below for conversational intents
+            continue
+        # --- END CONVERSATIONAL ROUTING ---
+
         if result.get("needs_clarification"):
             question = result.get("clarification_question", "Details?")
             task_obj = result.get('selected_task') or {}
@@ -302,7 +336,6 @@ async def wait_for_orchestrator():
             await asyncio.sleep(3)
 
 async def is_allowed_chat(chat_id: int, username: Optional[str] = None) -> bool:
-    # ... (rest of function remains same)
     # 1. Always allow the notification chat (for responding to clarifications)
     if config.notification_chat_id:
         try:
@@ -312,13 +345,9 @@ async def is_allowed_chat(chat_id: int, username: Optional[str] = None) -> bool:
             pass
     
     # 2. If using a bot for notifications, also allow the DM with that bot
-    if config.bot_token:
-        try:
-            bot_id = int(config.bot_token.split(":")[0])
-            if chat_id == bot_id:
-                return True
-        except (ValueError, IndexError):
-            pass
+    bot_id = get_bot_id()
+    if bot_id and chat_id == bot_id:
+        return True
 
     # 3. If no filters are defined, allow everything
     if not config.channel_chat_ids and not config.channel_usernames:
@@ -403,7 +432,8 @@ async def send_startup_history(client: TelegramClient):
             
             # Forward to scheduler if passes keywords (Orchestrator DB handles bot filtering)
             if not config.keywords or any(k in message.message.lower() for k in config.keywords):
-                webhook_batch.append(payload)
+                if not is_bot:
+                    webhook_batch.append(payload)
 
         # Dispatch batches per dialog instead of globally
         if context_batch:

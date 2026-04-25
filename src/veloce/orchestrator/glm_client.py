@@ -19,6 +19,7 @@ class GlmClient:
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
         scheduled_tasks: Optional[List[dict]] = None,
+        user_memories: Optional[List[dict]] = None,
         request_id: Optional[str] = None,
         conflict_context: Optional[str] = None
     ) -> GlmExtraction:
@@ -27,6 +28,7 @@ class GlmClient:
             "inbound": inbound.dict(),
             "retrieved_context": [item.dict() for item in retrieved_context] if retrieved_context else None,
             "scheduled_tasks": scheduled_tasks,
+            "user_memories": user_memories,
             "request_id": request_id,
             "conflict_context": conflict_context
         }

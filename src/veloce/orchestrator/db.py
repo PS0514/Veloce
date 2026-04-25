@@ -115,6 +115,18 @@ class SQLiteStore:
                 ON automated_messages(chat_id, message_id)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    preference TEXT NOT NULL,
+                    category TEXT,
+                    inserted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(chat_id, preference)
+                )
+                """
+            )
             # FTS5 table for keyword retrieval while retaining base table source-of-truth.
             conn.execute(
                 """
@@ -314,7 +326,8 @@ class SQLiteStore:
 
             if query:
                 sql = f"""
-                    SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
+                    SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date,
+                           EXISTS(SELECT 1 FROM automated_messages am WHERE am.chat_id = tc.chat_id AND am.message_id = tc.message_id) AS is_automated
                     FROM telegram_context_fts f
                     JOIN telegram_context tc ON tc.id = f.rowid
                     WHERE {' AND '.join(where)} AND telegram_context_fts MATCH ?
@@ -334,7 +347,8 @@ class SQLiteStore:
                     return rows
 
             sql = f"""
-                SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
+                SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date,
+                       EXISTS(SELECT 1 FROM automated_messages am WHERE am.chat_id = tc.chat_id AND am.message_id = tc.message_id) AS is_automated
                 FROM telegram_context tc
                 WHERE {' AND '.join(where)}
                 ORDER BY tc.date DESC
@@ -350,3 +364,29 @@ class SQLiteStore:
                 rows=len(rows),
             )
             return rows
+
+    def ingest_memory(self, chat_id: int, preference: str, category: str | None) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO user_memories (chat_id, preference, category)
+                VALUES (?, ?, ?)
+                """,
+                (chat_id, preference, category),
+            )
+            inserted = cursor.rowcount > 0
+            log_info(
+                logger,
+                "db_ingest_memory",
+                chat_id=chat_id,
+                preference=preference[:50],
+                inserted=inserted,
+            )
+            return inserted
+
+    def retrieve_memories(self, chat_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT preference, category FROM user_memories WHERE chat_id = ?",
+                (chat_id,)
+            ).fetchall()

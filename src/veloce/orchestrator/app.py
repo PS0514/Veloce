@@ -259,19 +259,18 @@ def veloce_task_scheduler(
         filtered_group = []
         for item in group:
             # STRICT DROP: Never treat automated messages as part of the user's command batch.
-            # (Context is safely handled via reply_to_text and trigger DB lookups).
             if item.chat_id and item.message_id:
                 if services.store.is_automated_message(item.chat_id, item.message_id):
                     log_info(logger, "scheduler_skipping_automated_message_strict", chat_id=item.chat_id, message_id=item.message_id)
                     continue
 
-            # Fallback for bot messages not in the automated_messages table
-            if getattr(item, "is_bot", False):
-                log_info(logger, "scheduler_skipping_automated_message_fallback_strict", chat_id=item.chat_id, message_id=item.message_id)
+            # Fallback for old bot messages in startup history that aren't in the automated_messages table
+            text_to_check = item.message or getattr(item, "raw_text", "") or ""
+            if any(p in text_to_check for p in ["[VeloceBot]", "✅ Scheduled:", "❓ **Clarification Needed**", "🚀 Task Scheduled"]):
+                log_info(logger, "scheduler_skipping_known_bot_pattern", chat_id=item.chat_id, message_id=item.message_id)
                 continue
-            
-            filtered_group.append(item)
 
+            filtered_group.append(item)
         if not filtered_group:
             continue
 

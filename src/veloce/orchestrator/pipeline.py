@@ -103,13 +103,17 @@ class SchedulerPipeline:
 
         # Retrieve already scheduled tasks from DB for AI context
         scheduled_tasks = []
+        user_memories = []
         if self.store:
             scheduled_tasks = [dict(row) for row in self.store.retrieve_scheduled_tasks(limit=15)]
+            if inbound.chat_id:
+                user_memories = [dict(row) for row in self.store.retrieve_memories(inbound.chat_id)]
 
         extraction = self.glm_client.extract_tasks(
             inbound, 
             retrieved_context=retrieved_context, 
             scheduled_tasks=scheduled_tasks,
+            user_memories=user_memories,
             request_id=request_id
         )
         log_info(
@@ -117,8 +121,44 @@ class SchedulerPipeline:
             "pipeline_glm_extract_done",
             request_id=request_id,
             tasks=len(extraction.tasks),
+            memories=len(extraction.extracted_memories),
+            intent=extraction.intent,
             metadata=extraction.metadata,
         )
+
+        # Ingest extracted memories if any
+        if self.store and inbound.chat_id and extraction.extracted_memories:
+            for mem in extraction.extracted_memories:
+                self.store.ingest_memory(inbound.chat_id, mem.preference, mem.category)
+
+        # ROUTING
+        # ROUTE 1: General Chat
+        if extraction.intent == "general_chat":
+            return [SchedulerResponse(
+                scheduled=False,
+                state="conversational_reply",
+                reason=extraction.bot_response or "How can I help you?",
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
+            )]
+
+        # ROUTE 2: Calendar Query ("What do I have tomorrow?")
+        elif extraction.intent == "query_calendar":
+            return [self._handle_calendar_query(inbound, extraction.query_date_range)]
+
+        # ROUTE 3: Save Memory
+        elif extraction.intent == "save_memory":
+            pref_list = [m.preference for m in extraction.extracted_memories]
+            msg = "I've remembered your preferences."
+            if pref_list:
+                msg = f"I've remembered: {', '.join(pref_list)}"
+            return [SchedulerResponse(
+                scheduled=False,
+                state="conversational_reply",
+                reason=extraction.bot_response or msg,
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
+            )]
 
         if not extraction.tasks:
             return [SchedulerResponse(
@@ -300,10 +340,15 @@ class SchedulerPipeline:
                         )
                     )
 
+            # Append breakdown to reason if available
+            notification_reason = schedule_result.reason
+            if schedule_result.scheduled and task.description:
+                notification_reason += f"\n\nHere is your task breakdown based on recent context:\n{task.description}"
+
             results.append(SchedulerResponse(
                 scheduled=schedule_result.scheduled,
                 selected_task=task,
-                reason=schedule_result.reason,
+                reason=notification_reason,
                 state=schedule_result.state,
                 calendar_event_id=schedule_result.calendar_event_id,
                 calendar_link=schedule_result.calendar_link,
@@ -315,3 +360,65 @@ class SchedulerPipeline:
             ))
         
         return results
+
+    def _handle_calendar_query(self, inbound: NormalizedInbound, date_range: dict | None) -> SchedulerResponse:
+        """Fetch events for a date range and generate a conversational brief."""
+        if not date_range or "start" not in date_range or "end" not in date_range:
+             return SchedulerResponse(
+                scheduled=False,
+                state="conversational_reply",
+                reason="I couldn't determine the date range for your query. Could you be more specific?",
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
+            )
+
+        try:
+            time_min = datetime.fromisoformat(date_range["start"].replace("Z", "+00:00"))
+            time_max = datetime.fromisoformat(date_range["end"].replace("Z", "+00:00"))
+        except ValueError:
+            return SchedulerResponse(
+                scheduled=False,
+                state="conversational_reply",
+                reason="The date range provided by the AI was invalid.",
+                source_chat_id=inbound.chat_id,
+                source_message_id=inbound.message_id,
+            )
+
+        # 1. Fetch events using calendar_client
+        events = self.scheduling_engine.calendar_client.list_events(
+            time_min=time_min, 
+            time_max=time_max
+        )
+        
+        # 2. If no events, return a simple string
+        if not events:
+             return SchedulerResponse(
+                 scheduled=False,
+                 state="conversational_reply", 
+                 reason="You have no events scheduled for that time.",
+                 source_chat_id=inbound.chat_id,
+                 source_message_id=inbound.message_id,
+            )
+
+        # 3. Format the events into a conversational reply
+        # Convert CalendarEvent objects to dicts for glm_client
+        event_dicts = [
+            {
+                "id": e.id,
+                "summary": e.summary,
+                "start": e.start.isoformat(),
+                "end": e.end.isoformat(),
+                "description": e.description,
+                "location": e.location
+            }
+            for e in events
+        ]
+        reply_text = self.glm_client.generate_brief(event_dicts, inbound.inbound_date, inbound.timezone)
+        
+        return SchedulerResponse(
+            scheduled=False,
+            state="conversational_reply",
+            reason=reply_text,
+            source_chat_id=inbound.chat_id,
+            source_message_id=inbound.message_id,
+        )

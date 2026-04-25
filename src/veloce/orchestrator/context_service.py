@@ -65,12 +65,27 @@ class ContextService:
             if query and score <= 0.15:
                 filtered_low_score += 1
                 continue
+
+            msg_text = row["message"]
+            
+            # 1. Check if DB knows it's automated
+            is_automated = False
+            if "is_automated" in row.keys():
+                is_automated = bool(row["is_automated"])
+                
+            # 2. Fallback for old historical messages that missed the DB table
+            is_known_bot_pattern = any(p in msg_text for p in ["[VeloceBot]", "✅ Scheduled:", "❓ **Clarification Needed**", "🚀 Task Scheduled"])
+            
+            # Ensure the LLM knows this message was from the bot
+            if (is_automated or is_known_bot_pattern) and not msg_text.startswith("[VeloceBot]"):
+                msg_text = f"[VeloceBot] {msg_text}"
+
             scored.append(
                 ContextItem(
                     message_id=row["message_id"],
                     sender_id=row["sender_id"],
                     chat_title=row["chat_title"],
-                    message=row["message"],
+                    message=msg_text,
                     date=row["date"],
                     source=row["source"],
                     score=score,

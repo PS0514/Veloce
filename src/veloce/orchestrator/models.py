@@ -17,6 +17,7 @@ class SchedulerInbound(BaseModel):
     reply_to_me: bool = False
     reply_to_msg_id: int | None = None
     reply_to_text: str | None = None
+    is_bot: bool = False
 
 
 class NormalizedInbound(BaseModel):
@@ -41,10 +42,21 @@ class TaskCandidate(BaseModel):
     confidence: float = Field(default=0.5, ge=0, le=1)
     needs_clarification: bool = False
     clarification_question: str | None = None
+    description: str | None = None  # NEW: For task decomposition/study guides
+
+
+class MemoryCandidate(BaseModel):
+    preference: str
+    category: str | None = None  # e.g., "availability", "food", "work"
+    confidence: float = Field(default=0.8, ge=0, le=1)
 
 
 class GlmExtraction(BaseModel):
+    intent: str = "schedule"  # e.g., "schedule", "query_calendar", "general_chat"
+    bot_response: str | None = None  # For direct AI replies
+    query_date_range: dict | None = None  # e.g., {"start": "ISO", "end": "ISO"} for calendar queries
     tasks: list[TaskCandidate] = Field(default_factory=list)
+    extracted_memories: list[MemoryCandidate] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -129,11 +129,18 @@ class GoogleCalendarClient:
     def _create_event_local(self, *, task: TaskCandidate, start: datetime, end: datetime, timezone_name: str) -> dict:
         token = _get_fresh_google_token()
         url = f"{GOOGLE_CALENDAR_BASE_URL}/calendars/{self.calendar_id}/events"
+        
+        # Build the description payload
+        event_description = "Scheduled by Veloce AI\n\n"
+        if task.description:
+            event_description += f"Task Guide / Breakdown:\n{task.description}\n\n"
+        event_description += f"Original Task: {task.task_name}\nDeadline: {task.deadline_iso}"
+
         payload = {
             "summary": task.task_name,
             "start": {"dateTime": start.isoformat(), "timeZone": timezone_name},
             "end": {"dateTime": end.isoformat(), "timeZone": timezone_name},
-            "description": f"Scheduled by Veloce AI\n\nOriginal Task: {task.task_name}\nDeadline: {task.deadline_iso}",
+            "description": event_description,
         }
         resp = requests.post(url, headers={"Authorization": f"Bearer {token}"}, json=payload, timeout=30)
         resp.raise_for_status()

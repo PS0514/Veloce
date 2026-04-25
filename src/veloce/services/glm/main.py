@@ -14,6 +14,7 @@ from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import (
     ContextItem,
     GlmExtraction,
+    MemoryCandidate,
     NormalizedInbound,
     TaskCandidate,
 )
@@ -60,6 +61,7 @@ class ExtractRequest(BaseModel):
     inbound: NormalizedInbound
     retrieved_context: Optional[List[ContextItem]] = None
     scheduled_tasks: Optional[List[dict]] = None
+    user_memories: Optional[List[dict]] = None
     request_id: Optional[str] = None
     conflict_context: Optional[str] = None
 
@@ -97,11 +99,12 @@ class GlmService:
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
         scheduled_tasks: Optional[List[dict]] = None,
+        user_memories: Optional[List[dict]] = None,
         request_id: Optional[str] = None,
         conflict_context: Optional[str] = None
     ) -> GlmExtraction:
         try:
-            return self._extract_tasks_internal(inbound, retrieved_context, scheduled_tasks, request_id, conflict_context)
+            return self._extract_tasks_internal(inbound, retrieved_context, scheduled_tasks, user_memories, request_id, conflict_context)
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
@@ -113,6 +116,7 @@ class GlmService:
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
         scheduled_tasks: Optional[List[dict]] = None,
+        user_memories: Optional[List[dict]] = None,
         request_id: Optional[str] = None,
         conflict_context: Optional[str] = None
     ) -> GlmExtraction:
@@ -150,6 +154,15 @@ class GlmService:
             scheduled_lines.append("---")
             scheduled_str = "\n".join(scheduled_lines)
 
+        memories_str = ""
+        if user_memories:
+            memories_lines = ["User Preferences/Memories:"]
+            for mem in user_memories:
+                cat = f" [{mem['category']}]" if mem.get('category') else ""
+                memories_lines.append(f"-{cat} {mem['preference']}")
+            memories_lines.append("---")
+            memories_str = "\n".join(memories_lines)
+
         # Append conflict context if provided
         raw_text = inbound.raw_text
         if conflict_context:
@@ -165,7 +178,7 @@ class GlmService:
             timezone=inbound.timezone,
             context_history=context_str,
             scheduled_tasks=scheduled_str,
-            raw_text=raw_text + reply_info
+            raw_text=(raw_text + reply_info + "\n\n" + memories_str).strip()
         )
 
         log_info(
@@ -276,16 +289,39 @@ class GlmService:
                 log_warning(logger, "glm_task_parse_item_error", error=str(e), item=item, request_id=request_id)
                 continue
 
+        raw_memories = parsed.get("extracted_memories", []) if isinstance(parsed, dict) else []
+        extracted_memories: List[MemoryCandidate] = []
+        for item in raw_memories:
+            if not isinstance(item, dict):
+                continue
+            try:
+                extracted_memories.append(
+                    MemoryCandidate(
+                        preference=str(item.get("preference", "")),
+                        category=item.get("category"),
+                        confidence=float(item.get("confidence", 0.8))
+                    )
+                )
+            except Exception as e:
+                log_warning(logger, "glm_memory_parse_item_error", error=str(e), item=item, request_id=request_id)
+                continue
+
         log_info(
             logger,
             "glm_request_done",
             request_id=request_id,
             elapsed_ms=elapsed_ms,
             tasks_found=len(tasks),
+            memories_found=len(extracted_memories),
+            intent=parsed.get("intent", "schedule")
         )
 
         return GlmExtraction(
+            intent=parsed.get("intent", "schedule"),
+            bot_response=parsed.get("bot_response"),
+            query_date_range=parsed.get("query_date_range"),
             tasks=tasks,
+            extracted_memories=extracted_memories,
             metadata={
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "model": self.model,
@@ -407,6 +443,7 @@ def extract(payload: ExtractRequest):
         inbound=payload.inbound,
         retrieved_context=payload.retrieved_context,
         scheduled_tasks=payload.scheduled_tasks,
+        user_memories=payload.user_memories,
         request_id=payload.request_id,
         conflict_context=payload.conflict_context
     )
