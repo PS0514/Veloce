@@ -125,15 +125,28 @@ async def lifespan(app: FastAPI):
     yield
 
 
-def _request_id(*, source: str | None, chat_id: int | None, message_id: int | None) -> str:
+def _request_id(*, source: str | None, chat_id: str | int | None, message_id: str | int | None) -> str:
     source_part = (source or "unknown").strip() or "unknown"
     chat_part = str(chat_id) if chat_id is not None else "na"
     message_part = str(message_id) if message_id is not None else "na"
     return f"{source_part}:{chat_part}:{message_part}"
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
 def _create_app() -> FastAPI:
     app = FastAPI(title="Veloce Orchestrator", version="0.1.0", lifespan=lifespan)
+    
+    # Add CORS middleware for the Chrome extension
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for local dev
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
     app.include_router(router)
     return app
 

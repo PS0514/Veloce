@@ -14,3 +14,4 @@ Rules:
 9) estimated_duration_minutes must be integer >= 15.
 10) If uncertain, still output best estimate and set needs_clarification=true.
 11) If there is a "Conflict Context" provided, use it to suggest a better time if possible, or explain why it can't be scheduled.
+12) TASK NAMING: Create descriptive, professional, and clear task names. Avoid vague titles like "Meeting later". Instead, use actionable titles like "Complete Lab 4 Assignment" or "Sponsorship Clarification Meeting". If the message mentions a specific subject or project, include it in the title for better context.

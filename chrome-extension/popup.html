@@ -65,29 +65,9 @@
               <span class="label">Time</span>
               <span class="value" id="fieldTime">-</span>
             </div>
-            <div class="row">
-              <span class="label">Confidence</span>
-              <span class="confidence-badge confidence-mid" id="fieldConfidence">-</span>
-              <div class="warning" id="clarificationWarning">Needs Clarification</div>
-            </div>
-            <div class="row">
-              <span class="label">Message</span>
-              <span class="value" id="fieldMessage">-</span>
-            </div>
           </div>
 
           <div class="small" id="lastPayload">No payload captured yet.</div>
-
-          <div class="schema extra-schema">
-            <div class="row">
-              <span class="label">Extracted Tasks</span>
-              <pre class="json-box" id="taskList">No extracted tasks yet.</pre>
-            </div>
-            <div class="row">
-              <span class="label">GLM Output JSON</span>
-              <pre class="json-box" id="glmJson">No GLM response yet.</pre>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -107,14 +87,7 @@
               </span>
             </label>
 
-            <label class="field" for="promptInput">
-              <span class="label">AI Prompt / Instructions</span>
-              <textarea id="promptInput" placeholder="Example: Extract only actionable tasks, preserve deadlines, and summarize the request clearly."></textarea>
-            </label>
-
             <button class="secondary-btn" id="connectAccountBtn" type="button">Connect Account</button>
-
-            <button class="secondary-btn" id="resetSettingsBtn" type="button">Reset to Default</button>
 
             <button class="save-btn" id="saveSettingsBtn" type="button">Save Settings</button>
             <div class="small" id="saveStatus">Changes are persisted in local storage.</div>

@@ -21,6 +21,13 @@ logger = get_logger(__name__)
 APP = Flask(__name__)
 APP.secret_key = os.getenv("FLASK_SECRET_KEY", "veloce-local-setup-secret")
 
+@APP.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response
+
 ROOT = Path(__file__).resolve().parents[2]
 GOOGLE_CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -29,6 +36,8 @@ GOOGLE_REDIRECT_PATH = "/google/oauth/callback"
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
 ]
 TELEGRAM_LOGIN_SESSION_KEY = "telegram_login_state"
 
@@ -913,7 +922,6 @@ def action_google_logout():
 # ---------------------------------------------------------------------------
 # Main route
 # ---------------------------------------------------------------------------
-
 @APP.route("/", methods=["GET"])
 def index():
     values = current_values()

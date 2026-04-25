@@ -6,30 +6,30 @@ from pydantic import BaseModel, Field
 
 class SchedulerInbound(BaseModel):
     source: str = "telegram_userbot"
-    message_id: int | None = None
-    sender_id: int | None = None
-    chat_id: int | None = None
+    message_id: str | int | None = None
+    sender_id: str | int | None = None
+    chat_id: str | int | None = None
     chat_title: str | None = None
     message: str | None = None
     raw_text: str | None = None
     date: str | None = None
     timezone: str | None = None
     reply_to_me: bool = False
-    reply_to_msg_id: int | None = None
+    reply_to_msg_id: str | int | None = None
     reply_to_text: str | None = None
 
 
 class NormalizedInbound(BaseModel):
     source: str
-    message_id: int | None
-    sender_id: int | None
-    chat_id: int | None
+    message_id: str | int | None
+    sender_id: str | int | None
+    chat_id: str | int | None
     chat_title: str | None
     inbound_date: str
     timezone: str
     raw_text: str
     reply_to_me: bool = False
-    reply_to_msg_id: int | None = None
+    reply_to_msg_id: str | int | None = None
     reply_to_text: str | None = None
 
 
@@ -49,15 +49,15 @@ class GlmExtraction(BaseModel):
 
 
 class ContextRetrieveRequest(BaseModel):
-    chat_id: int
+    chat_id: str | int
     query: str = ""
     limit: int = Field(default=8, ge=1, le=50)
     since: datetime | None = None
 
 
 class ContextItem(BaseModel):
-    message_id: int
-    sender_id: int | None = None
+    message_id: str | int
+    sender_id: str | int | None = None
     chat_title: str | None = None
     message: str
     date: str | None = None
@@ -66,7 +66,7 @@ class ContextItem(BaseModel):
 
 
 class ContextRetrieveResponse(BaseModel):
-    chat_id: int
+    chat_id: str | int
     query: str
     returned: int
     items: list[ContextItem]
@@ -74,19 +74,19 @@ class ContextRetrieveResponse(BaseModel):
 
 class ContextIngestRequest(BaseModel):
     source: str = "telegram_userbot"
-    message_id: int
-    sender_id: int | None = None
-    chat_id: int
+    message_id: str | int
+    sender_id: str | int | None = None
+    chat_id: str | int
     chat_title: str | None = None
     message: str
     date: str | None = None
 
 
 class AutomatedMessageIngestRequest(BaseModel):
-    chat_id: int
-    message_id: int
+    chat_id: str | int
+    message_id: str | int
     bot_type: str  # 'userbot' or 'fatherbot'
-    trigger_msg_id: int | None = None
+    trigger_msg_id: str | int | None = None
     task_name: str | None = None
 
 
@@ -101,8 +101,8 @@ class SchedulerResponse(BaseModel):
     clarification_question: str | None = None
     state: str
     chat_title: str | None = None
-    source_chat_id: int | None = None
-    source_message_id: int | None = None
+    source_chat_id: str | int | None = None
+    source_message_id: str | int | None = None
 
 
 class ManualCalendarAddRequest(BaseModel):

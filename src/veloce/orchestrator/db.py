@@ -9,9 +9,9 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class ContextRow:
-    chat_id: int
-    message_id: int
-    sender_id: int | None
+    chat_id: str | int
+    message_id: str | int
+    sender_id: str | int | None
     chat_title: str | None
     message: str
     source: str
@@ -24,16 +24,16 @@ class ScheduledTaskRow:
     start_time: str
     end_time: str
     calendar_event_id: str | None
-    chat_id: int | None
-    message_id: int | None
+    chat_id: str | int | None
+    message_id: str | int | None
 
 
 @dataclass(frozen=True)
 class AutomatedMessageRow:
-    chat_id: int
-    message_id: int
+    chat_id: str | int
+    message_id: str | int
     bot_type: str  # 'userbot' or 'fatherbot'
-    trigger_msg_id: int | None = None
+    trigger_msg_id: str | int | None = None
     task_name: str | None = None
 
 
@@ -57,9 +57,9 @@ class SQLiteStore:
                 """
                 CREATE TABLE IF NOT EXISTS telegram_context (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id INTEGER NOT NULL,
-                    message_id INTEGER NOT NULL,
-                    sender_id INTEGER,
+                    chat_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    sender_id TEXT,
                     chat_title TEXT,
                     message TEXT NOT NULL,
                     source TEXT NOT NULL,
@@ -98,10 +98,10 @@ class SQLiteStore:
                 """
                 CREATE TABLE IF NOT EXISTS automated_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id INTEGER NOT NULL,
-                    message_id INTEGER NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
                     bot_type TEXT NOT NULL,
-                    trigger_msg_id INTEGER,
+                    trigger_msg_id TEXT,
                     task_name TEXT,
                     inserted_at TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE(chat_id, message_id)
@@ -176,9 +176,9 @@ class SQLiteStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    row.chat_id,
-                    row.message_id,
-                    row.sender_id,
+                    str(row.chat_id),
+                    str(row.message_id),
+                    str(row.sender_id) if row.sender_id is not None else None,
                     row.chat_title,
                     row.message,
                     row.source,
@@ -209,8 +209,8 @@ class SQLiteStore:
                     row.start_time,
                     row.end_time,
                     row.calendar_event_id,
-                    row.chat_id,
-                    row.message_id,
+                    str(row.chat_id) if row.chat_id is not None else None,
+                    str(row.message_id) if row.message_id is not None else None,
                 ),
             )
             log_info(
@@ -230,10 +230,10 @@ class SQLiteStore:
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    row.chat_id,
-                    row.message_id,
+                    str(row.chat_id),
+                    str(row.message_id),
                     row.bot_type,
-                    row.trigger_msg_id,
+                    str(row.trigger_msg_id) if row.trigger_msg_id is not None else None,
                     row.task_name,
                 ),
             )
@@ -248,27 +248,27 @@ class SQLiteStore:
             )
             return inserted
 
-    def is_automated_message(self, chat_id: int, message_id: int) -> bool:
+    def is_automated_message(self, chat_id: str | int, message_id: str | int) -> bool:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM automated_messages WHERE chat_id = ? AND message_id = ?",
-                (chat_id, message_id),
+                (str(chat_id), str(message_id)),
             ).fetchone()
             return row is not None
 
-    def retrieve_trigger_id(self, chat_id: int, message_id: int) -> int | None:
+    def retrieve_trigger_id(self, chat_id: str | int, message_id: str | int) -> str | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT trigger_msg_id FROM automated_messages WHERE chat_id = ? AND message_id = ?",
-                (chat_id, message_id),
+                (str(chat_id), str(message_id)),
             ).fetchone()
             return row["trigger_msg_id"] if row else None
 
-    def retrieve_message(self, chat_id: int, message_id: int) -> sqlite3.Row | None:
+    def retrieve_message(self, chat_id: str | int, message_id: str | int) -> sqlite3.Row | None:
         with self._connect() as conn:
             return conn.execute(
                 "SELECT chat_id, message_id, sender_id, chat_title, message, source, date FROM telegram_context WHERE chat_id = ? AND message_id = ?",
-                (chat_id, message_id),
+                (str(chat_id), str(message_id)),
             ).fetchone()
 
     def retrieve_scheduled_tasks(self, limit: int = 20) -> list[sqlite3.Row]:
@@ -283,7 +283,7 @@ class SQLiteStore:
                 (limit,),
             ).fetchall()
 
-    def retrieve_chat_id_by_title(self, title: str) -> int | None:
+    def retrieve_chat_id_by_title(self, title: str) -> str | None:
         if not title:
             return None
         with self._connect() as conn:
@@ -347,7 +347,7 @@ class SQLiteStore:
     def retrieve_context(
         self,
         *,
-        chat_id: int,
+        chat_id: str | int,
         query: str,
         limit: int,
         since: str | None,
@@ -366,15 +366,21 @@ class SQLiteStore:
         )
 
         with self._connect() as conn:
-            base_params: list[object] = [chat_id]
+            base_params: list[object] = [str(chat_id)]
             where = ["tc.chat_id = ?"]
             if since:
                 where.append("tc.date >= ?")
                 base_params.append(since)
 
-            safe_query = f'"{query}"' if query else ""
+            # Clean query for FTS5 to avoid syntax errors and "no such column" errors
+            # We remove colons, double quotes, and other special FTS characters.
+            clean_query = query.replace('"', ' ').replace(':', ' ').replace('*', ' ').replace('(', ' ').replace(')', ' ')
+            # Truncate to avoid extremely long queries that might cause issues
+            clean_query = " ".join(clean_query.split()[:20]) 
+            
+            safe_query = f'"{clean_query}"' if clean_query else ""
 
-            if query:
+            if clean_query:
                 sql = f"""
                     SELECT tc.chat_id, tc.message_id, tc.sender_id, tc.chat_title, tc.message, tc.source, tc.date
                     FROM telegram_context_fts f
