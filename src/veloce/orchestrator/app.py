@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from pydantic import BaseModel
 
 from veloce.orchestrator.db import ContextRow, AutomatedMessageRow
 from veloce.orchestrator.dependencies import OrchestratorServices, build_services
@@ -233,6 +234,20 @@ def telegram_automated_message_ingest(
         return [_process_single(item) for item in payload]
     return _process_single(payload)
 
+
+class FeedbackRequest(BaseModel):
+    calendar_event_id: str
+    actual_duration_minutes: int
+
+@router.post("/task-feedback")
+def task_feedback(payload: FeedbackRequest):
+    success = services.store.update_task_feedback(
+        payload.calendar_event_id, 
+        payload.actual_duration_minutes
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found in database.")
+    return {"status": "success", "message": "Feedback recorded."}
 
 @router.post("/veloce-task-scheduler", response_model=SchedulerResponse | list[SchedulerResponse])
 def veloce_task_scheduler(

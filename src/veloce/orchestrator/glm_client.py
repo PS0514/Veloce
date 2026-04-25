@@ -3,7 +3,7 @@ import requests
 from typing import Optional, List
 
 from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
-from veloce.orchestrator.models import ContextItem, GlmExtraction, NormalizedInbound
+from veloce.orchestrator.models import ContextItem, GlmExtraction, NormalizedInbound, TaskCandidate
 
 logger = get_logger(__name__)
 
@@ -37,8 +37,33 @@ class GlmClient:
             return GlmExtraction(**resp.json())
         except Exception as exc:
             log_warning(logger, "glm_client_remote_failed", error=str(exc))
-            # Return empty extraction on failure to maintain legacy behavior
             return GlmExtraction(tasks=[], metadata={"error": str(exc), "remote": True})
+
+    def strategize_tasks(
+        self,
+        task: TaskCandidate,
+        inbound: NormalizedInbound,
+        workload_context: Optional[List[dict]] = None,
+        historical_bias: Optional[str] = None,
+        request_id: Optional[str] = None
+    ) -> List[TaskCandidate]:
+        url = f"{self.service_url}/strategize"
+        payload = {
+            "task": task.dict(),
+            "inbound": inbound.dict(),
+            "workload_context": workload_context,
+            "historical_bias": historical_bias,
+            "request_id": request_id
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=300)
+            resp.raise_for_status()
+            # The service now returns a list of tasks (Agent B output)
+            raw_tasks = resp.json()
+            return [TaskCandidate(**t) for t in raw_tasks]
+        except Exception as exc:
+            log_warning(logger, "glm_client_strategize_failed", error=str(exc))
+            return [task]
 
     def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
         url = f"{self.service_url}/generate-brief"

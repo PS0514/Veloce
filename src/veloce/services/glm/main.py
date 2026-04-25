@@ -63,6 +63,13 @@ class ExtractRequest(BaseModel):
     request_id: Optional[str] = None
     conflict_context: Optional[str] = None
 
+class StrategizeRequest(BaseModel):
+    task: TaskCandidate
+    inbound: NormalizedInbound
+    workload_context: Optional[List[dict]] = None
+    historical_bias: Optional[str] = None
+    request_id: Optional[str] = None
+
 class BriefRequest(BaseModel):
     events: List[dict]
     now_iso: str
@@ -92,23 +99,102 @@ class GlmService:
             rate_limit_rpm=self._rate_limiter.max_rpm,
         )
 
-    def extract_tasks(
-        self, 
-        inbound: NormalizedInbound, 
-        retrieved_context: Optional[List[ContextItem]] = None, 
-        scheduled_tasks: Optional[List[dict]] = None,
-        request_id: Optional[str] = None,
-        conflict_context: Optional[str] = None
-    ) -> GlmExtraction:
-        try:
-            return self._extract_tasks_internal(inbound, retrieved_context, scheduled_tasks, request_id, conflict_context)
-        except Exception as e:
-            import traceback
-            error_trace = traceback.format_exc()
-            log_warning(logger, "glm_extraction_critical_error", request_id=request_id, error=str(e), traceback=error_trace)
-            raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
+    def _clean_json_content(self, content: str) -> str:
+        clean = content.strip()
+        if clean.startswith("```"):
+            clean = clean.lstrip("`")
+            if clean.startswith("json"):
+                clean = clean[4:].strip()
+            else:
+                clean = clean.strip()
+            if clean.endswith("```"):
+                clean = clean[:-3].strip()
+        return clean
 
-    def _extract_tasks_internal(
+    def strategize_tasks(
+        self,
+        task: TaskCandidate,
+        inbound: NormalizedInbound,
+        workload_context: Optional[List[dict]] = None,
+        historical_bias: Optional[str] = None,
+        request_id: Optional[str] = None
+    ) -> List[TaskCandidate]:
+        if not self.api_key or self._client is None:
+            return [task]
+
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+        system_prompt_path = base_dir / "glm" / "prompt" / "strategist_system_prompt.txt"
+
+        try:
+            system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            log_warning(logger, "missing_strategist_prompt", request_id=request_id)
+            return [task]
+
+        workload_str = ""
+        if workload_context:
+            workload_str = "Current Week Load:\n" + "\n".join([f"- {e['summary']} at {e['start']}" for e in workload_context])
+
+        user_prompt = (
+            f"Current Time: {inbound.inbound_date}. Timezone: {inbound.timezone}.\n"
+            f"Primary Task: {json.dumps(task.dict())}\n"
+            f"{workload_str}\n"
+            f"Historical Bias: {historical_bias or 'No historical data yet.'}\n\n"
+            "Generate a realistic decomposition and plan."
+        )
+
+        log_info(logger, "glm_strategize_start", request_id=request_id, task=task.task_name)
+
+        try:
+            self._rate_limiter.acquire(request_id=request_id)
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
+
+            content = response.choices[0].message.content if response.choices else None
+            if not content:
+                log_warning(logger, "glm_strategize_empty", request_id=request_id)
+                return [task]
+
+            log_info(logger, "glm_strategize_raw_response", request_id=request_id, content=content)
+            
+            clean_content = self._clean_json_content(content)
+            parsed = json.loads(clean_content)
+            raw_tasks = parsed.get("tasks", [])
+
+            final_tasks: List[TaskCandidate] = []
+            found_original = False
+
+            for item in raw_tasks:
+                tc = TaskCandidate(
+                    task_name=item.get("task_name"),
+                    deadline_iso=item.get("deadline_iso"),
+                    start_time_iso=item.get("start_time_iso"),
+                    estimated_duration_minutes=item.get("estimated_duration_minutes", 60),
+                    confidence=1.0,
+                    needs_clarification=False
+                )
+                final_tasks.append(tc)
+                if tc.task_name == task.task_name:
+                    found_original = True
+
+            if not found_original:
+                final_tasks.insert(0, task)
+
+            log_info(logger, "glm_strategize_done", request_id=request_id, count=len(final_tasks))
+            return final_tasks
+
+        except Exception as e:
+            log_warning(logger, "glm_strategize_failed", error=str(e), request_id=request_id)
+            return [task]
+
+    def extract_tasks(
         self, 
         inbound: NormalizedInbound, 
         retrieved_context: Optional[List[ContextItem]] = None, 
@@ -183,86 +269,32 @@ class GlmService:
         ]
 
         started = time.perf_counter()
-        self._rate_limiter.acquire(request_id=request_id)
-
-        # Exponential backoff for 504/transient errors
-        max_retries = 3
-        retry_delay = 2.0  # start with 2 seconds
-        response = None
-        
-        for attempt in range(max_retries + 1):
-            try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=0.1,
-                    response_format={"type": "json_object"},
-                )
-                break # Success!
-            except Exception as exc:
-                is_timeout = "504" in str(exc) or "timeout" in str(exc).lower()
-                if is_timeout and attempt < max_retries:
-                    log_warning(
-                        logger, 
-                        "glm_request_retry", 
-                        attempt=attempt + 1, 
-                        delay=retry_delay, 
-                        error=str(exc),
-                        request_id=request_id
-                    )
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                    continue
-                
-                # If not a timeout or we ran out of retries, re-raise
-                log_warning(logger, "glm_request_failed_final", request_id=request_id, error=str(exc))
-                raise exc
-
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        content = response.choices[0].message.content if response.choices else None
-
-        if not content or not content.strip():
-            log_warning(logger, "glm_empty_content", request_id=request_id)
-            return GlmExtraction(tasks=[], metadata={"error": "empty_response"})
-
-        # MANDATE: Log the full raw response content
-        log_info(
-            logger,
-            "glm_raw_response",
-            request_id=request_id,
-            content=content
-        )
-
-        # Strip markdown code blocks if present
-        clean_content = content.strip()
-        if clean_content.startswith("```"):
-            # Remove opening block
-            clean_content = clean_content.lstrip("`")
-            if clean_content.startswith("json"):
-                clean_content = clean_content[4:].strip()
-            else:
-                clean_content = clean_content.strip()
-            
-            # Remove closing block
-            if clean_content.endswith("```"):
-                clean_content = clean_content[:-3].strip()
-
         try:
-            parsed = json.loads(clean_content) if isinstance(clean_content, str) else clean_content
-        except json.JSONDecodeError as jde:
-            log_warning(logger, "glm_json_decode_failed", request_id=request_id, error=str(jde), raw_content=content)
-            return GlmExtraction(tasks=[], metadata={"error": "json_decode_failed", "raw": content[:100]})
+            self._rate_limiter.acquire(request_id=request_id)
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
             
-        raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
-        tasks: List[TaskCandidate] = []
-        for item in raw_tasks:
-            if not isinstance(item, dict):
-                continue
-            try:
-                # Use 'or' to handle None values and provide sensible defaults
-                # Use explicit type casting to ensure Pydantic validation passes
-                tasks.append(
-                    TaskCandidate(
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            content = response.choices[0].message.content if response.choices else None
+
+            if not content:
+                log_warning(logger, "glm_empty_response", request_id=request_id)
+                return GlmExtraction(tasks=[], metadata={"error": "empty_response"})
+
+            log_info(logger, "glm_raw_response", request_id=request_id, content=content)
+
+            clean_content = self._clean_json_content(content)
+            parsed = json.loads(clean_content)
+            raw_tasks = parsed.get("tasks", []) if isinstance(parsed, dict) else []
+            tasks: List[TaskCandidate] = []
+            for item in raw_tasks:
+                if not isinstance(item, dict): continue
+                try:
+                    tasks.append(TaskCandidate(
                         task_name=str(item.get("task_name") or "Unnamed Task"),
                         deadline_iso=str(item.get("deadline_iso") or ""),
                         start_time_iso=item.get("start_time_iso"),
@@ -270,94 +302,29 @@ class GlmService:
                         confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.5),
                         needs_clarification=bool(item.get("needs_clarification", False)),
                         clarification_question=item.get("clarification_question"),
-                    )
-                )
-            except Exception as e:
-                log_warning(logger, "glm_task_parse_item_error", error=str(e), item=item, request_id=request_id)
-                continue
+                    ))
+                except: continue
 
-        log_info(
-            logger,
-            "glm_request_done",
-            request_id=request_id,
-            elapsed_ms=elapsed_ms,
-            tasks_found=len(tasks),
-        )
+            log_info(logger, "glm_request_done", request_id=request_id, elapsed_ms=elapsed_ms, tasks_found=len(tasks))
+            return GlmExtraction(tasks=tasks, metadata={"elapsed_ms": elapsed_ms})
 
-        return GlmExtraction(
-            tasks=tasks,
-            metadata={
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": self.model,
-                "elapsed_ms": elapsed_ms,
-            },
-        )
+        except Exception as e:
+            log_warning(logger, "glm_extraction_failed", error=str(e), request_id=request_id)
+            return self._fallback_extraction(inbound, request_id=request_id)
 
     def _fallback_extraction(self, inbound: NormalizedInbound, request_id: Optional[str] = None) -> GlmExtraction:
-        log_warning(logger, "glm_fallback", request_id=request_id, reason="missing_config")
         return GlmExtraction(tasks=[], metadata={"fallback": True})
 
     def generate_brief(self, events: List[dict], now_iso: str, timezone: str) -> str:
         if not self.api_key or self._client is None:
             return "Good morning! Hope you have a great day."
-
-        # Attempt to load timezone
-        try:
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(timezone)
-        except Exception:
-            tz = None
-
-        event_lines = []
-        for e in events:
-            # e is a dict representation of CalendarEvent
-            raw_start = e["start"]
-            start_dt = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
-            
-            # Convert to local timezone if possible
-            if tz and start_dt.tzinfo:
-                start_dt = start_dt.astimezone(tz)
-            
-            # Heuristic for all-day events: Google returns 'YYYY-MM-DD' for 'date'
-            # which fromisoformat turns into midnight. 
-            # If the original string didn't have a 'T', it's likely an all-day event.
-            if "T" not in raw_start:
-                time_str = "All Day"
-            else:
-                time_str = start_dt.strftime("%H:%M")
-
-            summary = e.get("summary", "Busy")
-            desc = e.get("description")
-            line = f"- {time_str}: {summary}"
-            if desc:
-                # Keep description short
-                clean_desc = desc.split("\n")[0][:100]
-                line += f" ({clean_desc})"
-            event_lines.append(line)
         
-        events_str = "\n".join(event_lines) if event_lines else "No events scheduled."
-        
-        system_prompt = (
-            "You are Veloce, a high-performance AI task orchestrator. Your goal is to provide a warm, "
-            "motivating daily brief. Follow this exact template structure:\n\n"
-            "1. GREETING: Start with a warm, time-aware greeting.\n"
-            "2. SCHEDULE SUMMARY: Naturally summarize the day's events. If there are no events, provide a cheerful 'clear skies' message.\n"
-            "3. VELOCE INSIGHT: Provide one specific piece of productivity advice or a healthy habit tip.\n"
-            "4. CLOSING: End with a short, motivating one-liner.\n\n"
-            "Keep the tone professional yet friendly and energetic. Remove the GREETING, SCHEDULE SUMMARY, VELOCE INSIGHT, and CLOSING labels from the final output."
-        )
-        user_prompt = (
-            f"Current Time: {now_iso}. Timezone: {timezone}.\n\n"
-            f"Today's Schedule:\n{events_str}\n\n"
-            "Please generate my daily brief using the Veloce template."
-        )
+        events_str = "\n".join([f"- {e.get('summary')} at {e.get('start')}" for e in events])
+        system_prompt = "You are Veloce, a productivity assistant. Provide a warm daily brief."
+        user_prompt = f"Today's Schedule:\n{events_str}\n\nPlease generate my daily brief."
 
         try:
-            started = time.perf_counter()
             self._rate_limiter.acquire()
-
-            log_info(logger, "glm_generate_brief_payload", system_prompt=system_prompt, user_prompt=user_prompt)
-
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -365,35 +332,11 @@ class GlmService:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                max_tokens=2048,
             )
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-
-            # Detailed logging to diagnose 'null' responses
-            choice = response.choices[0] if response.choices else None
-            finish_reason = getattr(choice, "finish_reason", "unknown") if choice else "no_choice"
-            raw_content = choice.message.content if choice and choice.message else None
-
-            log_info(
-                logger, 
-                "glm_generate_brief_response_received", 
-                elapsed_ms=elapsed_ms, 
-                finish_reason=finish_reason,
-                has_content=raw_content is not None,
-                raw_response=raw_content
-            )
-
-            content = raw_content
-            if content:
-                content = content.strip()
-            else:
-                content = f"Good morning! Here are your events for today:\n\n{events_str}"
-            
-            log_info(logger, "glm_generate_brief_done", elapsed_ms=elapsed_ms, content=content)
-            return content
+            return response.choices[0].message.content or "Good morning!"
         except Exception as exc:
             log_warning(logger, "glm_generate_brief_failed", error=str(exc))
-            return f"Good morning! Here are your events for today:\n\n{events_str}"
+            return "Good morning!"
 
 glm_service = GlmService()
 
@@ -409,6 +352,16 @@ def extract(payload: ExtractRequest):
         scheduled_tasks=payload.scheduled_tasks,
         request_id=payload.request_id,
         conflict_context=payload.conflict_context
+    )
+
+@app.post("/strategize", response_model=List[TaskCandidate])
+def strategize(payload: StrategizeRequest):
+    return glm_service.strategize_tasks(
+        task=payload.task,
+        inbound=payload.inbound,
+        workload_context=payload.workload_context,
+        historical_bias=payload.historical_bias,
+        request_id=payload.request_id
     )
 
 @app.post("/generate-brief")

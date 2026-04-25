@@ -66,6 +66,11 @@ def current_values() -> dict[str, str | bool]:
         "notification_chat_id": cfg.get("notification_chat_id", _env("TELEGRAM_NOTIFICATION_CHAT_ID")),
         "clarification_mode": cfg.get("clarification_mode", "group"),
         "telegram_bot_token": _env("TELEGRAM_BOT_TOKEN"),
+        # Energy periods
+        "deep_work_start": cfg.get("deep_work_start", "09:00"),
+        "deep_work_end": cfg.get("deep_work_end", "13:00"),
+        "shallow_work_start": cfg.get("shallow_work_start", "14:00"),
+        "shallow_work_end": cfg.get("shallow_work_end", "17:00"),
         # Transient UI state (not persisted)
         "telegram_phone": "",
         "telegram_code": "",
@@ -93,7 +98,27 @@ def save_settings(values: dict[str, str | bool]) -> None:
         "enable_google_sync": auto_enable,
         "notification_chat_id": str(values.get("notification_chat_id", "")),
         "clarification_mode": str(values.get("clarification_mode", "group")),
+        "deep_work_start": str(values.get("deep_work_start", "09:00")),
+        "deep_work_end": str(values.get("deep_work_end", "13:00")),
+        "shallow_work_start": str(values.get("shallow_work_start", "14:00")),
+        "shallow_work_end": str(values.get("shallow_work_end", "17:00")),
     })
+
+
+@APP.route("/save-energy-settings", methods=["POST"])
+def save_energy_settings():
+    values = current_values()
+    values.update({
+        "deep_work_start": request.form.get("deep_work_start", "09:00"),
+        "deep_work_end": request.form.get("deep_work_end", "13:00"),
+        "shallow_work_start": request.form.get("shallow_work_start", "14:00"),
+        "shallow_work_end": request.form.get("shallow_work_end", "17:00"),
+    })
+    try:
+        save_settings(values)
+        return render_template("partials/notifications.html", success="Energy periods saved.")
+    except Exception as exc:
+        return render_template("partials/notifications.html", error=f"Save failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +696,16 @@ def action_save():
         values["notification_chat_id"] = request.form["notification_chat_id"].strip()
     if "clarification_mode" in request.form:
         values["clarification_mode"] = request.form["clarification_mode"].strip()
+
+    # Energy windows
+    if "deep_work_start" in request.form:
+        values["deep_work_start"] = request.form["deep_work_start"].strip()
+    if "deep_work_end" in request.form:
+        values["deep_work_end"] = request.form["deep_work_end"].strip()
+    if "shallow_work_start" in request.form:
+        values["shallow_work_start"] = request.form["shallow_work_start"].strip()
+    if "shallow_work_end" in request.form:
+        values["shallow_work_end"] = request.form["shallow_work_end"].strip()
         
     try:
         save_settings(values)

@@ -79,10 +79,21 @@ class SQLiteStore:
                     calendar_event_id TEXT,
                     chat_id INTEGER,
                     message_id INTEGER,
+                    actual_duration_minutes INTEGER,
+                    is_completed INTEGER DEFAULT 0,
                     inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
                 """
             )
+            # Migration: Ensure columns exist for feedback loop
+            try:
+                conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN actual_duration_minutes INTEGER;")
+            except sqlite3.OperationalError:
+                pass # Already exists
+            try:
+                conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN is_completed INTEGER DEFAULT 0;")
+            except sqlite3.OperationalError:
+                pass # Already exists
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS automated_messages (
@@ -281,6 +292,57 @@ class SQLiteStore:
                 (title,),
             ).fetchone()
             return row["chat_id"] if row else None
+
+    def update_task_feedback(self, calendar_event_id: str, actual_duration_minutes: int) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE scheduled_tasks 
+                SET actual_duration_minutes = ?, is_completed = 1 
+                WHERE calendar_event_id = ?
+                """,
+                (actual_duration_minutes, calendar_event_id),
+            )
+            log_info(
+                logger,
+                "db_update_task_feedback",
+                calendar_event_id=calendar_event_id,
+                actual_duration=actual_duration_minutes,
+                found=cursor.rowcount > 0
+            )
+            return cursor.rowcount > 0
+
+    def calculate_historical_bias(self) -> str:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT task_name, start_time, end_time, actual_duration_minutes 
+                FROM scheduled_tasks 
+                WHERE is_completed = 1 AND actual_duration_minutes IS NOT NULL
+                ORDER BY inserted_at DESC LIMIT 50
+                """
+            ).fetchall()
+            
+            if not rows:
+                return "No historical data yet."
+            
+            diffs = []
+            for r in rows:
+                try:
+                    start = datetime.fromisoformat(r["start_time"].replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(r["end_time"].replace("Z", "+00:00"))
+                    estimated = int((end - start).total_seconds() / 60)
+                    actual = r["actual_duration_minutes"]
+                    if estimated > 0:
+                        diffs.append(actual / estimated)
+                except Exception:
+                    continue
+            
+            if not diffs:
+                return "No valid historical comparisons found."
+                
+            avg_multiplier = sum(diffs) / len(diffs)
+            return f"Historical Performance: User typically takes {round(avg_multiplier, 2)}x the estimated time (based on {len(diffs)} tasks)."
 
     def retrieve_context(
         self,

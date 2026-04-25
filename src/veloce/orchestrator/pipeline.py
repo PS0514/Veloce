@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from veloce.orchestrator.db import SQLiteStore, ScheduledTaskRow
 from veloce.orchestrator.glm_client import GlmClient
 from veloce.orchestrator.scheduling_engine import BusyInterval, SchedulingEngine
-from veloce.orchestrator.logging_utils import get_logger, log_info
+from veloce.orchestrator.logging_utils import get_logger, log_info, log_warning
 from veloce.orchestrator.models import (
     ContextItem,
     NormalizedInbound,
@@ -143,7 +144,7 @@ class SchedulerPipeline:
             )
 
             if task.needs_clarification or task.confidence < self.min_confidence_for_auto:
-                # Check availability anyway to provide a better question
+                # ... (existing clarification logic)
                 overlaps = self.scheduling_engine.check_availability(
                     task=task,
                     timezone_name=inbound.timezone,
@@ -153,14 +154,6 @@ class SchedulerPipeline:
                 status_msg = "You are free!" if not overlaps else f"You have a conflict with '{overlaps[0].summary}'."
                 question = task.clarification_question or f"I found this task. {status_msg} Should I schedule it?"
                 
-                logger.info(
-                    "pipeline_needs_clarification request_id=%s task=%s reason=confidence_or_flag confidence=%.2f min=%.2f overlaps=%d",
-                    request_id,
-                    task.task_name,
-                    task.confidence,
-                    self.min_confidence_for_auto,
-                    len(overlaps)
-                )
                 results.append(SchedulerResponse(
                     scheduled=False,
                     selected_task=task,
@@ -174,144 +167,102 @@ class SchedulerPipeline:
                 ))
                 continue
 
-            if retrieved_context is not None and len(retrieved_context) == 0:
-                log_info(
-                    logger,
-                    "pipeline_needs_context",
-                    request_id=request_id,
-                    task=task.task_name,
-                    reason="empty_retrieved_context",
+            # NEW: STRATEGIST AGENT (Multi-Agent Step)
+            # Only strategize if the task is confident and not needing clarification
+            log_info(logger, "pipeline_strategizing_start", request_id=request_id, task=task.task_name)
+            
+            # 1. Fetch Energy Settings from Runtime Config
+            from veloce.runtime_config import get_config_value
+            energy_settings = {
+                "deep_work": f"{get_config_value('deep_work_start', '09:00')} - {get_config_value('deep_work_end', '13:00')}",
+                "shallow_work": f"{get_config_value('shallow_work_start', '14:00')} - {get_config_value('shallow_work_end', '17:00')}"
+            }
+            
+            # 2. Fetch Workload Context (next 7 days)
+            workload_context = []
+            try:
+                tz = ZoneInfo(inbound.timezone)
+                now_local = datetime.now(tz)
+                end_of_week = now_local + timedelta(days=7)
+                
+                raw_events = self.scheduling_engine.calendar_client.list_events(
+                    time_min=now_local,
+                    time_max=end_of_week
                 )
-                results.append(SchedulerResponse(
-                    scheduled=False,
-                    selected_task=task,
-                    needs_clarification=True,
-                    clarification_question="I could not find enough context. Can you confirm the exact deadline and duration?",
-                    reason="More context needed",
-                    state="decision_needs_context",
-                    chat_title=inbound.chat_title,
-                    source_chat_id=inbound.chat_id,
-                    source_message_id=inbound.message_id,
-                ))
-                continue
+                workload_context = [
+                    {"summary": e.summary, "start": e.start, "end": e.end}
+                    for e in raw_events
+                ]
+            except Exception as e:
+                log_warning(logger, "pipeline_workload_fetch_failed", error=str(e))
 
-            schedule_result = self.scheduling_engine.schedule(
+            # 3. Calculate REAL Historical Bias from DB
+            historical_bias = "No historical data yet."
+            if self.store:
+                historical_bias = self.store.calculate_historical_bias()
+            
+            # Update the prompt context with Energy Settings
+            historical_bias += f"\nUser Energy Windows: {energy_settings}"
+
+            strategized_tasks = self.glm_client.strategize_tasks(
                 task=task,
-                timezone_name=inbound.timezone,
-                request_id=request_id,
-                ephemeral_busy_slots=ephemeral_busy_slots
+                inbound=inbound,
+                workload_context=workload_context,
+                historical_bias=historical_bias,
+                request_id=request_id
             )
+            log_info(logger, "pipeline_strategizing_done", request_id=request_id, task_count=len(strategized_tasks))
 
-            # OPTIMIZATION: If conflict detected, let GLM help resolve it
-            if schedule_result.state == "conflict_detected" and schedule_result.conflicting_intervals:
-                log_info(logger, "pipeline_conflict_resolution_attempt", request_id=request_id, task=task.task_name)
-                
-                # Format conflict context for GLM
-                conflict_desc = []
-                for idx, busy in enumerate(schedule_result.conflicting_intervals):
-                    # Robustly handle both objects and dicts
-                    if hasattr(busy, "start"):
-                        b_start = busy.start
-                        b_end = busy.end
-                        b_summary = busy.summary
-                    else:
-                        # Fallback for dicts if reconstruction failed or skipped
-                        b_start = datetime.fromisoformat(busy["start"].replace("Z", "+00:00"))
-                        b_end = datetime.fromisoformat(busy["end"].replace("Z", "+00:00"))
-                        b_summary = busy.get("summary", "Busy")
-                        
-                    busy_start_str = b_start.strftime("%H:%M")
-                    busy_end_str = b_end.strftime("%H:%M")
-                    conflict_desc.append(f"{idx+1}. '{b_summary}' from {busy_start_str} to {busy_end_str}")
-                
-                conflict_context = "CRITICAL: The following schedule conflicts were detected:\n" + "\n".join(conflict_desc)
-                conflict_context += "\n\nPlease determine if the task should be rescheduled to a different time or if I should ask the user for a preference."
-
-                # Call GLM again with the conflict information
-                resolution_extraction = self.glm_client.extract_tasks(
-                    inbound=inbound,
-                    retrieved_context=retrieved_context,
+            for subtask in strategized_tasks:
+                schedule_result = self.scheduling_engine.schedule(
+                    task=subtask,
+                    timezone_name=inbound.timezone,
                     request_id=request_id,
-                    conflict_context=conflict_context
+                    ephemeral_busy_slots=ephemeral_busy_slots
                 )
 
-                if resolution_extraction.tasks:
-                    # Use the first suggestion from GLM
-                    suggested_task = resolution_extraction.tasks[0]
-                    log_info(
-                        logger, 
-                        "pipeline_conflict_resolution_suggestion", 
-                        request_id=request_id, 
-                        task=task.task_name,
-                        new_start=suggested_task.start_time_iso,
-                        needs_clarification=suggested_task.needs_clarification
-                    )
-                    
-                    # Update the task with GLM's suggestion
-                    # If GLM suggested a different time, we can either return it for confirmation or try one more time.
-                    # For now, let's return it as a clarification/suggestion to the user.
+                if schedule_result.scheduled and schedule_result.proposed_start and schedule_result.proposed_end:
+                    try:
+                        start_dt = datetime.fromisoformat(schedule_result.proposed_start.replace("Z", "+00:00"))
+                        end_dt = datetime.fromisoformat(schedule_result.proposed_end.replace("Z", "+00:00"))
+                        ephemeral_busy_slots.append(
+                            BusyInterval(
+                                start=start_dt,
+                                end=end_dt,
+                                summary=f"Ephemeral: {subtask.task_name}"
+                            )
+                        )
+                    except ValueError:
+                        logger.warning("Failed to parse proposed times for ephemeral memory")
+
+                    # Save to persistent DB storage
+                    if self.store:
+                        self.store.ingest_scheduled_task(
+                            ScheduledTaskRow(
+                                task_name=subtask.task_name,
+                                start_time=schedule_result.proposed_start,
+                                end_time=schedule_result.proposed_end,
+                                calendar_event_id=schedule_result.calendar_event_id,
+                                chat_id=inbound.chat_id,
+                                message_id=inbound.message_id,
+                            )
+                        )
+
+                # For the response, we primarily report on the main task, 
+                # but we can list support tasks in the reason.
+                if subtask.task_name == task.task_name:
                     results.append(SchedulerResponse(
-                        scheduled=False,
-                        selected_task=suggested_task,
-                        reason=f"Conflict detected. AI suggests: {suggested_task.clarification_question or 'Rescheduling'}",
-                        state="conflict_resolved_suggestion",
-                        needs_clarification=True,
-                        clarification_question=suggested_task.clarification_question or f"I found a conflict with {schedule_result.conflicting_intervals[0].summary}. Should I move it to {suggested_task.start_time_iso}?",
+                        scheduled=schedule_result.scheduled,
+                        selected_task=subtask,
+                        reason=schedule_result.reason if len(strategized_tasks) == 1 else f"{schedule_result.reason} (plus {len(strategized_tasks)-1} support tasks)",
+                        state=schedule_result.state,
+                        calendar_event_id=schedule_result.calendar_event_id,
+                        calendar_link=schedule_result.calendar_link,
+                        needs_clarification=schedule_result.needs_clarification,
+                        clarification_question=schedule_result.clarification_question,
                         chat_title=inbound.chat_title,
                         source_chat_id=inbound.chat_id,
                         source_message_id=inbound.message_id,
                     ))
-                    continue
-
-            log_info(
-                logger,
-                "pipeline_schedule_done",
-                request_id=request_id,
-                task=task.task_name,
-                state=schedule_result.state,
-                scheduled=schedule_result.scheduled,
-                reason=schedule_result.reason,
-            )
-
-            if schedule_result.scheduled and schedule_result.proposed_start and schedule_result.proposed_end:
-                try:
-                    start_dt = datetime.fromisoformat(schedule_result.proposed_start.replace("Z", "+00:00"))
-                    end_dt = datetime.fromisoformat(schedule_result.proposed_end.replace("Z", "+00:00"))
-                    ephemeral_busy_slots.append(
-                        BusyInterval(
-                            start=start_dt,
-                            end=end_dt,
-                            summary=f"Ephemeral: {task.task_name}"
-                        )
-                    )
-                except ValueError:
-                    logger.warning("Failed to parse proposed times for ephemeral memory")
-
-                # Save to persistent DB storage
-                if self.store:
-                    self.store.ingest_scheduled_task(
-                        ScheduledTaskRow(
-                            task_name=task.task_name,
-                            start_time=schedule_result.proposed_start,
-                            end_time=schedule_result.proposed_end,
-                            calendar_event_id=schedule_result.calendar_event_id,
-                            chat_id=inbound.chat_id,
-                            message_id=inbound.message_id,
-                        )
-                    )
-
-            results.append(SchedulerResponse(
-                scheduled=schedule_result.scheduled,
-                selected_task=task,
-                reason=schedule_result.reason,
-                state=schedule_result.state,
-                calendar_event_id=schedule_result.calendar_event_id,
-                calendar_link=schedule_result.calendar_link,
-                needs_clarification=schedule_result.needs_clarification,
-                clarification_question=schedule_result.clarification_question,
-                chat_title=inbound.chat_title,
-                source_chat_id=inbound.chat_id,
-                source_message_id=inbound.message_id,
-            ))
         
         return results

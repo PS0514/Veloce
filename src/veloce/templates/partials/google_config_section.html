@@ -22,5 +22,48 @@
     <div class="actions" style="margin-top: 10px;">
       <button type="button" onclick="applySelectedCalendar()" style="background: #1b4965; padding: 6px 12px; font-size: 0.9rem;">Use selected calendar</button>
     </div>
-  </div>
-</div>
+    </div>
+
+    <!-- ENERGY PERIODS SECTION -->
+    <div class="section fade-in" style="border-top: 3px solid #118ab2; margin-top: 20px;">
+    <div class="section-head">
+      <h2 class="section-title">Energy Windows</h2>
+      <p class="section-sub">Define your peak productivity hours for deep work tasks.</p>
+    </div>
+
+    <form hx-post="/save-energy-settings" hx-target="#energy-notifications">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <!-- Deep Work Row -->
+        <div style="display: grid; grid-template-columns: 140px 1fr 1fr; gap: 12px; align-items: center;">
+          <strong style="font-size: 0.9rem;">Deep Work</strong>
+          <div class="input-group">
+            <label style="font-size: 0.75rem; margin-bottom: 2px;">Start Time</label>
+            <input type="time" name="deep_work_start" value="{{ values.get('deep_work_start', '09:00') }}">
+          </div>
+          <div class="input-group">
+            <label style="font-size: 0.75rem; margin-bottom: 2px;">End Time</label>
+            <input type="time" name="deep_work_end" value="{{ values.get('deep_work_end', '13:00') }}">
+          </div>
+        </div>
+
+        <!-- Shallow Work Row -->
+        <div style="display: grid; grid-template-columns: 140px 1fr 1fr; gap: 12px; align-items: center;">
+          <strong style="font-size: 0.9rem;">Shallow Work</strong>
+          <div class="input-group">
+            <label style="font-size: 0.75rem; margin-bottom: 2px;">Start Time</label>
+            <input type="time" name="shallow_work_start" value="{{ values.get('shallow_work_start', '14:00') }}">
+          </div>
+          <div class="input-group">
+            <label style="font-size: 0.75rem; margin-bottom: 2px;">End Time</label>
+            <input type="time" name="shallow_work_end" value="{{ values.get('shallow_work_end', '17:00') }}">
+          </div>
+        </div>
+      </div>
+
+      <div id="energy-notifications" style="margin-top: 10px;"></div>
+      <button type="submit" style="margin-top: 15px; background: #118ab2; font-size: 0.9rem; padding: 8px 16px;">
+        Update Energy Windows
+      </button>
+    </form>
+    </div>
+    </div>
