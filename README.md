@@ -1,116 +1,87 @@
-# Veloce
+# 🚀 Veloce: The Agentic Productivity Orchestrator
 
-Veloce is a Python-first AI orchestration system that turns unstructured messages into actionable tasks and schedules them into Google Calendar.
+**UMHackathon 2026 Submission**
 
-## Problem
+Veloce is a high-performance, multi-agent orchestration system that bridges the gap between messy digital communication and structured productivity. It doesn't just "read" your messages; it **strategizes** your life.
 
-Important task and deadline info is scattered across Telegram, Gmail, and LMS feeds. Manual triage and calendar entry is slow and error-prone.
+---
 
-## Solution
+## 🌟 The "Secret Sauce" (What makes Veloce different?)
 
-Veloce runs orchestration fully natively in Python without relying on external workflow engines like n8n:
+Unlike standard "GPT-wrappers," Veloce implements advanced engineering patterns to handle the unpredictability of human workflows:
 
-1. Receive inbound messages (listener or extension webhook).
-2. Use Ilmu GLM as the reasoning engine to interpret and extract tasks.
-3. Decide among no-action, needs-context, needs-clarification, or schedule-now.
-4. Query Google Calendar availability.
-5. Check clashes and find the earliest free slot before the deadline.
-6. Create calendar events and return the scheduling result.
+*   **⚡ Energy-Aware Scheduling:** Veloce understands that not all hours are equal. It prioritizes "Deep Work" (coding, writing) during your peak energy windows and "Shallow Work" (emails, admin) during your slumps.
+*   **🧠 Historical Bias Correction:** Veloce learns your "planning fallacy." If you consistently underestimate how long a task takes, Veloce automatically applies a multiplier to your future estimates based on your actual performance history.
+*   **🔗 Omnichannel Ingestion:** Native integration with **Telegram (Userbot & Bot)**, **Gmail (Polling)**, and **Moodle/Spectrum (Scraping)** ensures no deadline is missed, regardless of where it originates.
+*   **🤖 Multi-Agent Pipeline:**
+    *   **The Extractor:** Parses unstructured text into structured parameters.
+    *   **The Strategist:** Decomposes tasks, adjusts durations based on bias, and selects optimal energy windows.
+    *   **The Validator:** Hard-checks Google Calendar for deterministic conflict resolution.
 
-## Current Architecture
+---
 
-- **AI Engine:** Ilmu GLM (`ilmu-glm-5.1` via OpenAI-compatible chat completions). Prompts are stored externally in the `glm/` folder.
-- **Orchestration API:** FastAPI service in `src/veloce/orchestrator/app.py`.
-- **Listener:** Telethon Telegram listener in `src/veloce/listener_service.py`.
-- **Context Store:** SQLite + FTS5 in `src/veloce/orchestrator/db.py`.
-- **Scheduling:** Google Calendar adapter and slot engine in `src/veloce/orchestrator/scheduling_engine.py`.
+## 🛠️ Architecture: Microservices Approach
 
-## API Endpoints
+Veloce is built as a decoupled, event-driven ecosystem using **Docker Compose**:
 
-- POST `/veloce-task-scheduler`
-- POST `/telegram-context-ingest`
-- POST `/telegram-context-retrieve`
-- GET `/health`
+1.  **`orchestrator`**: The "Brain" (FastAPI). Manages the logic flow and database.
+2.  **`telegram`**: A dual-mode service (Userbot for listening, Bot for notifications).
+3.  **`gmail`**: A polling microservice that monitors your inbox via OAuth2.
+4.  **`glm`**: A dedicated LLM proxy service for `ilmu-glm-5.1`.
+5.  **`calendar`**: The Google Calendar integration layer.
+6.  **`Chrome Extension`**: A lightweight scraper for Moodle and manual browser-based triggers.
 
-## Quickstart
+---
 
-1. Create and activate a virtual environment.
-2. Install dependencies:
-   - `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env` and set required values.
-4. Run setup wizard (highly recommended for Google/Telegram auth):
-   - `python scripts/run_setup.py`
-5. Run orchestrator API:
-   - `python scripts/run_orchestrator.py`
-6. Run Telegram listener:
-   - `python scripts/run_listener.py`
-7. Or run both via Docker:
-   - `docker compose -f deploy/docker-compose.yaml up -d`
+## 🚀 Quickstart
 
-*(Compatibility launchers `python setup.py` and `python listener.py` also work).*
+### 1. Requirements
+*   Python 3.10+
+*   Docker & Docker Compose
+*   Google Cloud Console Project (with Calendar & Gmail APIs enabled)
+*   Telegram API ID/Hash
 
-## Extension Setup (Developer Mode)
-To load the Veloce extension into your browser, follow these steps:
-1. Open Extensions: In Google Chrome, navigate to chrome://extensions/.
-2. Enable Developer Mode: Toggle the Developer mode switch in the top-right corner.
-3. Load the Extension: Click the Load unpacked button.
-4. Select Folder: Navigate to your local Veloce directory and select the chrome-extension folder.
+### 2. Installation
+```bash
+# Clone and install dependencies
+git clone https://github.com/your-repo/veloce
+pip install -r requirements.txt
 
-## Environment Variables & Configuration
+# Setup environment
+cp .env.example .env
+```
 
-Veloce relies on a mix of `.env` for static secrets and `data/veloce_config.json` for dynamic runtime configurations (like OAuth tokens and UI-configurable filters).
+### 3. The Setup Wizard (Recommended)
+Veloce includes a custom-built, interactive **Setup Wizard** to handle the complex OAuth and Telegram handshakes:
+```bash
+python scripts/run_setup.py
+```
+*   Visit `http://127.0.0.1:8765`
+*   Connect Telegram (Phone number)
+*   Connect Google (OAuth)
+*   Configure **Energy Windows** (Deep/Shallow work hours)
 
-**Core `.env` variables:**
+### 4. Deploy
+```bash
+docker compose -f deploy/docker-compose.yaml up -d
+```
 
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
-- `VELOCE_ORCHESTRATOR_URL` (example: `http://127.0.0.1:8000/veloce-task-scheduler`)
-- `GENERIC_TIMEZONE` (example: `Asia/Kuala_Lumpur`)
-- `VELOCE_DB_PATH` (optional, default `data/veloce.db`)
+---
 
-**GLM (Ilmu AI):**
+## 📖 Feature Deep Dive
 
-- `ILMU_API_KEY`
-- `ILMU_BASE_URL` (example: `https://api.ilmu.ai/v1`)
-- `ILMU_MODEL` (optional, default `ilmu-glm-5.1`)
-- `ILMU_RATE_LIMIT_RPM` (optional, default `10`)
+### 🌖 Proactive Morning Briefs
+Every morning at 8:00 AM, Veloce analyzes your day and sends a Telegram summary. It doesn't just list events; it highlights conflicts and asks for feedback on yesterday's tasks to refine your **Historical Bias** data.
 
-**Google Calendar Setup:**
+### 🧩 Chrome Extension (LMS Integration)
+Specifically designed for UM students, the extension monitors **Moodle/Spectrum**. When you view a course page or forum post, Veloce extracts assignment deadlines automatically and proposes them in your Telegram chat for a "One-Click Schedule."
 
-- `ENABLE_GOOGLE_SYNC=true`
-- `GOOGLE_CALENDAR_ID` (stored in config, default `primary`)
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
+### ⚖️ Active Ambiguity Resolution
+If you say "Sync tomorrow," and you have multiple projects, Veloce won't guess. It triggers a **Clarification State**, asking: *"Which project are we syncing? (A) Website (B) PRD Update"*.
 
-*(Note: Access and Refresh tokens are securely generated by the setup wizard and automatically managed/rotated in `data/veloce_config.json`).*
+---
 
-## Browser Google Login
-
-The setup wizard features a local web server for smooth Google OAuth integration:
-
-1. Open the setup wizard (`python scripts/run_setup.py`).
-2. In the Google Calendar section, ensure your Google Client ID and Client Secret are entered.
-3. Ensure this redirect URI is added in your Google Cloud Console: `http://127.0.0.1:8765/google/oauth/callback`
-4. Click **Sign in with Google** in the wizard.
-5. Finish consent in the browser.
-6. Return to the wizard, click **List my Google calendars**, and choose the target calendar.
-7. Save the configuration.
-
-## Google Calendar Setup Guide
-
-1. Open [Google Calendar](https://calendar.google.com) and sign in.
-2. In the left sidebar, click the `+` next to `Other calendars`.
-3. Choose `Create new calendar`.
-4. Give the calendar a clear name, such as `Veloce` or `Study Planner`.
-5. Click `Create calendar` and confirm it appears in your calendar list.
-6. Return to the setup wizard, click `List my Google calendars`, and select the calendar you want Veloce to use.
-7. Save the configuration so the Calendar ID is written to your config file.
-
-If you want Veloce to schedule into your main calendar, leave `GOOGLE_CALENDAR_ID=primary`.
-
-## Notes
-
-- If Google sync is disabled (`ENABLE_GOOGLE_SYNC=false`), the scheduler acts as a dry-run and returns a non-scheduled decision with reasoning.
-- If the GLM engine cannot extract a valid actionable task or deadline, the scheduler returns a `no-action` state.
-- Docker compose spins up both the Python orchestrator service and the Telegram listener side-by-side.
-- Prompt templates for the LLM are located in the `glm/` directory and can be edited without restarting the server.
+## 🛡️ Privacy & Security
+*   **Stateful Local Store:** All context is stored in a local SQLite database, not on external servers.
+*   **Selective Tracking:** Only the Telegram channels you explicitly "Opt-In" to are monitored.
+*   **Token Rotation:** Automatic management and secure rotation of Google OAuth refresh tokens.
